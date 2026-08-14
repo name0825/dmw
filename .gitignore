@@ -4,5 +4,11 @@ server/data
 web/dist
 .env
 .env.*
+!.env.example
+!.env.production.example
+agent-demo/.env
+agent-demo/.env.*
+!agent-demo/.env.example
+!agent-demo/.env.win.example
 .DS_Store
 npm-debug.log*
