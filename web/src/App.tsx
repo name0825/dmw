@@ -21,7 +21,7 @@ type DeviceForm = {
 
 export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
-  const [login, setLogin] = useState({ email: 'admin@dmw.local', password: 'admin123' })
+  const [login, setLogin] = useState({ email: '', password: '' })
   const [form, setForm] = useState<DeviceForm>({ name: '', mac_address: '', ip_address: '' })
   const [editingId, setEditingId] = useState<number | null>(null)
   const [token, setToken] = useState('')
@@ -30,18 +30,22 @@ export default function App() {
   const [historyByDevice, setHistoryByDevice] = useState<Record<number, Array<{ timestamp: string; cpu_usage: number; memory_usage: number; disk_usage: number }>>>({})
   const [alerts, setAlerts] = useState<Array<{ deviceId: number; level: string; message: string; metric: string; value: number }>>([])
   const [agentState, setAgentState] = useState({
-    serverUrl: 'http://localhost:3001',
+    serverUrl: import.meta.env.VITE_API_BASE || 'http://localhost:3001',
     pairingCode: '',
     apiKey: '',
     deviceId: null as number | null,
   })
 
-  const apiBase = 'http://localhost:3001'
+  const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:3001').replace(/\/$/, '')
+  const wsBase = (
+    import.meta.env.VITE_WS_BASE ||
+    `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+  ).replace(/\/$/, '')
 
   const loadDevices = async () => {
     if (!token) return
 
-    const res = await fetch(`${apiBase}/devices`, {
+    const res = await fetch(`${apiBase || ''}/devices`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -58,7 +62,7 @@ export default function App() {
       disk_usage: Number(device.disk_usage ?? 0),
     })))
 
-    const alertRes = await fetch(`${apiBase}/alerts`, {
+    const alertRes = await fetch(`${apiBase || ''}/alerts`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -75,24 +79,40 @@ export default function App() {
   }, [token])
 
   useEffect(() => {
-    const socket = new WebSocket('ws://localhost:3001')
+    if (!token) return
 
-    socket.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(event.data)
-        if (payload.type === 'devices-updated' && Array.isArray(payload.devices)) {
-          setDevices(payload.devices)
+    let socket: WebSocket | null = null
+    let reconnectTimer: number | null = null
+
+    const connect = () => {
+      socket = new WebSocket(`${wsBase}?token=${encodeURIComponent(token)}`)
+
+      socket.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(event.data)
+          if (payload.type === 'devices-updated' && Array.isArray(payload.devices)) {
+            setDevices(payload.devices)
+          }
+        } catch {
+          // ignore parse errors
         }
-      } catch {
-        // ignore parse errors
+      }
+
+      socket.onclose = () => {
+        if (reconnectTimer) window.clearTimeout(reconnectTimer)
+        reconnectTimer = window.setTimeout(connect, 1500)
       }
     }
 
-    return () => socket.close()
-  }, [])
+    connect()
+    return () => {
+      if (socket) socket.close()
+      if (reconnectTimer) window.clearTimeout(reconnectTimer)
+    }
+  }, [token, wsBase])
 
   const loginUser = async () => {
-    const res = await fetch(`${apiBase}/auth/login`, {
+    const res = await fetch(`${apiBase || ''}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(login),
@@ -142,7 +162,7 @@ export default function App() {
     }
 
     const method = editingId !== null ? 'PATCH' : 'POST'
-    const endpoint = editingId !== null ? `${apiBase}/devices/${editingId}` : `${apiBase}/devices`
+    const endpoint = editingId !== null ? `${apiBase || ''}/devices/${editingId}` : `${apiBase || ''}/devices`
 
     const res = await fetch(endpoint, {
       method,
@@ -167,7 +187,7 @@ export default function App() {
   }
 
   const deleteDevice = async (id: number) => {
-    const res = await fetch(`${apiBase}/devices/${id}`, {
+    const res = await fetch(`${apiBase || ''}/devices/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -187,7 +207,7 @@ export default function App() {
   }
 
   const wakeDevice = async (id: number) => {
-    const res = await fetch(`${apiBase}/devices/${id}/wake`, {
+    const res = await fetch(`${apiBase || ''}/devices/${id}/wake`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     })
@@ -200,7 +220,7 @@ export default function App() {
   }
 
   const loadHistory = async (deviceId: number) => {
-    const res = await fetch(`${apiBase}/devices/${deviceId}/history`, {
+    const res = await fetch(`${apiBase || ''}/devices/${deviceId}/history`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -223,7 +243,7 @@ export default function App() {
       return
     }
 
-    const res = await fetch(`${agentState.serverUrl}/agent/pair`, {
+    const res = await fetch(`${agentState.serverUrl || ''}/agent/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip: '127.0.0.1', pairingCode }),
@@ -253,7 +273,7 @@ export default function App() {
       deviceId: agentState.deviceId,
     }
 
-    const res = await fetch(`${agentState.serverUrl}/agent/heartbeat`, {
+    const res = await fetch(`${agentState.serverUrl || ''}/agent/heartbeat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

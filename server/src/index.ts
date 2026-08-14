@@ -2,140 +2,27 @@ import 'dotenv/config'
 import Fastify from 'fastify'
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
-import path from 'node:path'
-import sqlite3 from 'sqlite3'
-import { open } from 'sqlite'
 import bcrypt from 'bcryptjs'
-import jwt from 'jsonwebtoken'
 import { randomBytes } from 'node:crypto'
-import { WebSocketServer } from 'ws'
 import wol from 'wake_on_lan'
-import { evaluateDeviceStatus } from './deviceStatus.js'
-import { evaluateAlerts, notifyAlerts } from './alerts.js'
+
+import { APP_ENV, CORS_ORIGIN, PORT } from './config.js'
+import { db, ensureAdmin } from './db.js'
+import { authMiddleware, createToken, findRefreshTokenMatch, revokeRefreshToken } from './auth.js'
+import { evaluateAlerts } from './alerts.js'
+import { broadcastState, setupWebSocket } from './ws.js'
+import { updateOfflineStates, monitorAlerts } from './monitoring.js'
 
 const app = Fastify({ logger: false })
 await app.register(cookie)
-await app.register(cors, { origin: true, credentials: true })
-
-const wsClients = new Set<any>()
-const broadcastState = async () => {
-  const devices = await db.all('SELECT * FROM devices ORDER BY id DESC')
-  const normalized = devices.map((device: any) => ({
-    ...device,
-    status: evaluateDeviceStatus(device, new Date()),
-  }))
-  const payload = JSON.stringify({ type: 'devices-updated', devices: normalized })
-  for (const socket of wsClients) {
-    if (socket.readyState === 1) {
-      socket.send(payload)
-    }
-  }
-}
-const PORT = Number(process.env.PORT || 3001)
-const JWT_SECRET = process.env.JWT_SECRET || 'dev-secret'
-const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'dmw.db')
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@dmw.local'
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'admin123'
-
-const db = await open({
-  filename: DB_PATH,
-  driver: sqlite3.Database,
+await app.register(cors, {
+  origin: (origin, callback) => {
+    const allowedOrigins = new Set([...CORS_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'])
+    const isAllowed = !origin || allowedOrigins.has(origin) || !APP_ENV || APP_ENV === 'development'
+    callback(null, isAllowed)
+  },
+  credentials: true,
 })
-
-await db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    email TEXT UNIQUE NOT NULL,
-    password_hash TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS devices (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    mac_address TEXT NOT NULL,
-    ip_address TEXT NOT NULL,
-    agent_key_hash TEXT,
-    agent_paired INTEGER NOT NULL DEFAULT 0,
-    paired_at TEXT,
-    last_seen TEXT,
-    status TEXT NOT NULL DEFAULT 'NOT_PAIRED',
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
-  );
-
-  CREATE TABLE IF NOT EXISTS pairing_codes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id INTEGER NOT NULL,
-    code TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    used_at TEXT,
-    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(device_id) REFERENCES devices(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS device_metrics_latest (
-    device_id INTEGER PRIMARY KEY,
-    cpu_usage REAL,
-    memory_usage REAL,
-    disk_usage REAL,
-    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY(device_id) REFERENCES devices(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS refresh_tokens (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    token_hash TEXT NOT NULL,
-    issued_at TEXT NOT NULL,
-    expires_at TEXT NOT NULL,
-    revoked INTEGER NOT NULL DEFAULT 0
-  );
-
-  CREATE TABLE IF NOT EXISTS device_metrics_history (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    device_id INTEGER NOT NULL,
-    timestamp TEXT NOT NULL,
-    cpu_usage REAL,
-    memory_usage REAL,
-    disk_usage REAL,
-    FOREIGN KEY(device_id) REFERENCES devices(id)
-  );
-`)
-
-const ensureAdmin = async () => {
-  const existing = await db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL])
-  if (!existing) {
-    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10)
-    await db.run('INSERT INTO users (email, password_hash) VALUES (?, ?)', [ADMIN_EMAIL, passwordHash])
-  }
-}
-
-await ensureAdmin()
-
-const createToken = (email: string) => jwt.sign({ email }, JWT_SECRET, { expiresIn: '1d' })
-
-const authMiddleware = async (request: any, reply: any) => {
-  const header = request.headers.authorization || ''
-  const token = header.startsWith('Bearer ') ? header.slice(7) : ''
-
-  if (!token) {
-    reply.code(401).send({ message: 'Unauthorized' })
-    return
-  }
-
-  try {
-    const decoded = jwt.verify(token, JWT_SECRET) as { email: string }
-    const user = await db.get('SELECT id, email FROM users WHERE email = ?', [decoded.email])
-    if (!user) {
-      reply.code(401).send({ message: 'Invalid token' })
-      return
-    }
-    request.user = user
-  } catch {
-    reply.code(401).send({ message: 'Invalid or expired token' })
-    return
-  }
-}
 
 app.addHook('preHandler', async (request: any, reply) => {
   const skipAuthRoutes = ['/auth/login', '/health']
@@ -143,6 +30,8 @@ app.addHook('preHandler', async (request: any, reply) => {
     await authMiddleware(request, reply)
   }
 })
+
+await ensureAdmin()
 
 app.get('/health', async () => ({ status: 'ok' }))
 
@@ -196,17 +85,7 @@ app.post('/auth/refresh', async (request, reply) => {
     return
   }
 
-  const rows = await db.all('SELECT * FROM refresh_tokens WHERE revoked = 0')
-  let matched = null as any
-
-  for (const row of rows) {
-    const ok = await bcrypt.compare(refreshToken, row.token_hash)
-    if (ok) {
-      matched = row
-      break
-    }
-  }
-
+  const matched = await findRefreshTokenMatch(refreshToken)
   if (!matched) {
     reply.code(401).send({ message: 'Invalid refresh token' })
     return
@@ -218,7 +97,7 @@ app.post('/auth/refresh', async (request, reply) => {
     return
   }
 
-  const accessToken = createToken(ADMIN_EMAIL)
+  const accessToken = createToken('admin@dmw.local')
   return { accessToken }
 })
 
@@ -228,13 +107,7 @@ app.post('/auth/logout', async (request, reply) => {
   const refreshToken = bodyToken || cookieToken
 
   if (refreshToken) {
-    const rows = await db.all('SELECT * FROM refresh_tokens WHERE revoked = 0')
-    for (const row of rows) {
-      const ok = await bcrypt.compare(refreshToken, row.token_hash)
-      if (ok) {
-        await db.run('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?', [row.id])
-      }
-    }
+    await revokeRefreshToken(refreshToken)
   }
 
   reply.clearCookie('refreshToken')
@@ -243,15 +116,15 @@ app.post('/auth/logout', async (request, reply) => {
 
 app.get('/dashboard', async () => {
   const devices = await db.all('SELECT * FROM devices ORDER BY id DESC')
-  const total = devices.length
-  const online = devices.filter((device) => device.status === 'ONLINE').length
-  const offline = devices.filter((device) => device.status === 'OFFLINE').length
-  const notPaired = devices.filter((device) => device.agent_paired === 0).length
-
-  return { total, online, offline, notPaired }
+  return {
+    total: devices.length,
+    online: devices.filter((device) => device.status === 'ONLINE').length,
+    offline: devices.filter((device) => device.status === 'OFFLINE').length,
+    notPaired: devices.filter((device) => device.agent_paired === 0).length,
+  }
 })
 
-app.get('/devices', async (request: any) => {
+app.get('/devices', async () => {
   const devices = await db.all(`
     SELECT d.*, m.cpu_usage, m.memory_usage, m.disk_usage, m.updated_at AS metrics_updated_at
     FROM devices d
@@ -261,7 +134,7 @@ app.get('/devices', async (request: any) => {
   return { devices }
 })
 
-app.get('/devices/:id/history', async (request: any, reply) => {
+app.get('/devices/:id/history', async (request: any) => {
   const { id } = request.params
   const history = await db.all(
     'SELECT * FROM device_metrics_history WHERE device_id = ? ORDER BY timestamp DESC LIMIT 10',
@@ -279,9 +152,7 @@ app.get('/alerts', async () => {
     ORDER BY d.id DESC
   `)
 
-  const alerts = devices.flatMap((device: any) => evaluateAlerts(device))
-  await notifyAlerts(alerts)
-  return { alerts }
+  return { alerts: devices.flatMap((device: any) => evaluateAlerts(device)) }
 })
 
 app.post('/devices', async (request: any, reply) => {
@@ -314,7 +185,7 @@ app.post('/devices', async (request: any, reply) => {
   return { deviceId, pairingCode: code, expiresAt }
 })
 
-app.patch('/devices/:id', async (request: any, reply) => {
+app.patch('/devices/:id', async (request: any) => {
   const { id } = request.params
   const { name, mac_address, ip_address } = (request.body || {}) as {
     name?: string
@@ -348,7 +219,7 @@ app.patch('/devices/:id', async (request: any, reply) => {
   return { message: 'Device updated' }
 })
 
-app.delete('/devices/:id', async (request: any, reply) => {
+app.delete('/devices/:id', async (request: any) => {
   const { id } = request.params
   await db.run('DELETE FROM devices WHERE id = ?', [id])
   await db.run('DELETE FROM pairing_codes WHERE device_id = ?', [id])
@@ -371,10 +242,23 @@ app.post('/devices/:id/wake', async (request: any, reply) => {
     return
   }
 
+  if (device.status === 'ONLINE') {
+    return { message: 'Device is already online' }
+  }
+
   try {
     const address = device.ip_address
     const broadcast = address.split('.').slice(0, 3).join('.') + '.255'
-    await wol.wake(device.mac_address, { address: broadcast, port: 9 })
+    await new Promise<void>((resolve, reject) => {
+      wol.wake(device.mac_address, { address: broadcast, port: 9 }, (error?: Error) => {
+        if (error) {
+          reject(error)
+          return
+        }
+        resolve()
+      })
+    })
+
     await db.run('UPDATE devices SET status = ?, updated_at = ? WHERE id = ?', ['WAKE_TIMEOUT', new Date().toISOString(), id])
     await broadcastState()
     return { message: 'Wake packet sent' }
@@ -408,9 +292,10 @@ app.post('/agent/pair', async (request: any, reply) => {
 
   const apiKey = randomBytes(24).toString('hex')
   const apiKeyHash = await bcrypt.hash(apiKey, 10)
+  const apiKeyHint = apiKey.slice(0, 12)
   await db.run(
-    'UPDATE devices SET agent_key_hash = ?, agent_paired = 1, paired_at = ?, last_seen = ?, status = ?, updated_at = ? WHERE id = ?',
-    [apiKeyHash, new Date().toISOString(), new Date().toISOString(), 'ONLINE', new Date().toISOString(), device.id],
+    'UPDATE devices SET agent_key_hash = ?, agent_key_hint = ?, agent_paired = 1, paired_at = ?, last_seen = ?, status = ?, updated_at = ? WHERE id = ?',
+    [apiKeyHash, apiKeyHint, new Date().toISOString(), new Date().toISOString(), 'ONLINE', new Date().toISOString(), device.id],
   )
   await db.run('UPDATE pairing_codes SET used_at = ? WHERE id = ?', [new Date().toISOString(), activeCode.id])
   await broadcastState()
@@ -427,18 +312,15 @@ app.post('/agent/heartbeat', async (request: any, reply) => {
     return
   }
 
-  const devices = await db.all('SELECT * FROM devices WHERE agent_paired = 1')
-  let matchedDevice: any = null
-
-  for (const device of devices) {
-    const ok = await bcrypt.compare(apiKey, device.agent_key_hash)
-    if (ok) {
-      matchedDevice = device
-      break
-    }
+  const apiKeyHint = apiKey.slice(0, 12)
+  const matchedDevice = await db.get('SELECT * FROM devices WHERE agent_paired = 1 AND agent_key_hint = ?', [apiKeyHint])
+  if (!matchedDevice) {
+    reply.code(401).send({ message: 'Invalid API key' })
+    return
   }
 
-  if (!matchedDevice) {
+  const ok = await bcrypt.compare(apiKey, matchedDevice.agent_key_hash)
+  if (!ok) {
     reply.code(401).send({ message: 'Invalid API key' })
     return
   }
@@ -467,28 +349,11 @@ app.post('/agent/heartbeat', async (request: any, reply) => {
   return { message: 'Heartbeat received' }
 })
 
-const updateOfflineStates = async () => {
-  const devices = await db.all('SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC', ['ONLINE', 'OFFLINE', 'WAKE_TIMEOUT'])
-
-  for (const device of devices) {
-    const nextStatus = evaluateDeviceStatus(device, new Date())
-    if (nextStatus !== device.status) {
-      await db.run('UPDATE devices SET status = ?, updated_at = ? WHERE id = ?', [nextStatus, new Date().toISOString(), device.id])
-    }
-  }
-
-  await broadcastState()
-}
-
 setInterval(() => {
   updateOfflineStates().catch(() => undefined)
+  monitorAlerts().catch(() => undefined)
 }, 10000)
 
 const server = await app.listen({ port: PORT, host: '0.0.0.0' })
-const wsServer = new WebSocketServer({ server: app.server })
-wsServer.on('connection', (socket: any) => {
-  wsClients.add(socket)
-  socket.send(JSON.stringify({ type: 'connected', message: 'DMW socket connected' }))
-  socket.on('close', () => wsClients.delete(socket))
-})
+setupWebSocket(server)
 console.log(`DMW server listening on http://localhost:${PORT}`)
