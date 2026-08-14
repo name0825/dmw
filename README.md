@@ -58,6 +58,27 @@ npm run dev:web
 
 또는 Windows에서:
 
+### 4) 프로덕션 실행
+
+```bash
+./start-prod.sh
+```
+
+Windows CMD:
+
+```cmd
+start-prod.cmd
+```
+
+Windows PowerShell:
+
+```powershell
+./start-prod.ps1
+```
+
+> 프로덕션 실행은 `.env` 준비가 필요합니다.
+
+
 ```powershell
 ./start-dev.ps1
 ```
