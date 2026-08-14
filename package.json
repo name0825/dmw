@@ -12,6 +12,6 @@
     "build": "npm --workspace server run build && npm --workspace web run build",
     "start": "npm --workspace server run start",
     "demo": "node agent-demo/demo-flow.js",
-    "test": "node --test server/src/**/*.test.js"
+    "test": "npm --workspace server run build && node --test server/dist/**/*.test.js"
   }
 }
