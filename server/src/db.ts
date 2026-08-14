@@ -71,8 +71,12 @@ await db.exec(`
 
 export const ensureAdmin = async () => {
   const existing = await db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL])
+  const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10)
+
   if (!existing) {
-    const passwordHash = await bcrypt.hash(ADMIN_PASSWORD, 10)
     await db.run('INSERT INTO users (email, password_hash) VALUES (?, ?)', [ADMIN_EMAIL, passwordHash])
+    return
   }
+
+  await db.run('UPDATE users SET password_hash = ? WHERE email = ?', [passwordHash, ADMIN_EMAIL])
 }
