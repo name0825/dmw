@@ -354,6 +354,6 @@ setInterval(() => {
   monitorAlerts().catch(() => undefined)
 }, 10000)
 
-const server = await app.listen({ port: PORT, host: '0.0.0.0' })
-setupWebSocket(server)
+await app.listen({ port: PORT, host: '0.0.0.0' })
+setupWebSocket(app.server)
 console.log(`DMW server listening on http://localhost:${PORT}`)
