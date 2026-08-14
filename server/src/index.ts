@@ -25,7 +25,7 @@ await app.register(cors, {
 })
 
 app.addHook('preHandler', async (request: any, reply) => {
-  const skipAuthRoutes = ['/auth/login', '/health']
+  const skipAuthRoutes = ['/auth/login', '/health', '/agent/pair', '/agent/heartbeat']
   if (!skipAuthRoutes.includes(request.url) && !request.url.startsWith('/auth/refresh')) {
     await authMiddleware(request, reply)
   }
