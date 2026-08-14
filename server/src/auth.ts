@@ -16,6 +16,13 @@ export const isValidJwtToken = (token: string) => {
   }
 }
 
+export const getUserFromRefreshToken = async (refreshToken: string) => {
+  const matched = await findRefreshTokenMatch(refreshToken)
+  if (!matched) return null
+
+  return db.get('SELECT id, email FROM users WHERE id = ?', [matched.user_id])
+}
+
 export const authMiddleware = async (request: any, reply: any) => {
   const header = request.headers.authorization || ''
   const token = header.startsWith('Bearer ') ? header.slice(7) : ''

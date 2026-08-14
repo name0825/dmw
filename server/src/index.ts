@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs'
 import { randomBytes } from 'node:crypto'
 import wol from 'wake_on_lan'
 
-import { APP_ENV, CORS_ORIGIN, PORT } from './config.js'
+import { ADMIN_EMAIL, APP_ENV, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { db, ensureAdmin } from './db.js'
 import { authMiddleware, createToken, findRefreshTokenMatch, revokeRefreshToken } from './auth.js'
 import { evaluateAlerts } from './alerts.js'
@@ -31,6 +31,7 @@ app.addHook('preHandler', async (request: any, reply) => {
   }
 })
 
+validateRuntimeConfig()
 await ensureAdmin()
 
 app.get('/health', async () => ({ status: 'ok' }))
@@ -60,8 +61,8 @@ app.post('/auth/login', async (request, reply) => {
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString()
 
   await db.run(
-    'INSERT INTO refresh_tokens (token_hash, issued_at, expires_at, revoked) VALUES (?, ?, ?, 0)',
-    [refreshHash, new Date().toISOString(), expiresAt],
+    'INSERT INTO refresh_tokens (user_id, token_hash, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, 0)',
+    [user.id, refreshHash, new Date().toISOString(), expiresAt],
   )
 
   reply.setCookie('refreshToken', refreshToken, {
@@ -72,7 +73,7 @@ app.post('/auth/login', async (request, reply) => {
     maxAge: 60 * 60 * 24 * 7,
   })
 
-  return { accessToken, refreshToken }
+  return { accessToken }
 })
 
 app.post('/auth/refresh', async (request, reply) => {
@@ -97,7 +98,27 @@ app.post('/auth/refresh', async (request, reply) => {
     return
   }
 
-  const accessToken = createToken('admin@dmw.local')
+  const user = await db.get('SELECT id, email FROM users WHERE id = ?', [matched.user_id])
+  const email = user?.email || ADMIN_EMAIL
+  const accessToken = createToken(email)
+  const nextRefreshToken = randomBytes(32).toString('hex')
+  const refreshHash = await bcrypt.hash(nextRefreshToken, 10)
+  const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString()
+
+  await db.run('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?', [matched.id])
+  await db.run(
+    'INSERT INTO refresh_tokens (user_id, token_hash, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, 0)',
+    [matched.user_id, refreshHash, new Date().toISOString(), expiresAt],
+  )
+
+  reply.setCookie('refreshToken', nextRefreshToken, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
+    secure: false,
+    maxAge: 60 * 60 * 24 * 7,
+  })
+
   return { accessToken }
 })
 
