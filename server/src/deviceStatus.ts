@@ -20,7 +20,11 @@ export function evaluateDeviceStatus(device: DeviceStatusInput, now: Date = new 
   const elapsed = now.getTime() - lastSeen
 
   if (status === 'WAKE_TIMEOUT') {
-    return elapsed > WAKE_TIMEOUT_AFTER_MS ? 'OFFLINE' : 'WAKE_TIMEOUT'
+    // For WAKE_TIMEOUT, we should use updated_at (when the WOL packet was sent) instead of last_seen
+    // to properly calculate the timeout period
+    const updatedAt = new Date(device.updated_at || '').getTime()
+    const elapsedFromWake = now.getTime() - updatedAt
+    return elapsedFromWake > WAKE_TIMEOUT_AFTER_MS ? 'OFFLINE' : 'WAKE_TIMEOUT'
   }
 
   if (status === 'ONLINE' && elapsed > OFFLINE_AFTER_MS) {

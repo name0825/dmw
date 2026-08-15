@@ -157,6 +157,27 @@ DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
 SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
 ```
 
+## 프론트엔드 빌드 설정
+
+프론트엔드는 Vite를 사용하여 빌드되며, API 호출 주소는 `VITE_API_BASE` 환경 변수에 의해 결정됩니다. VPN을 통해 접속하는 경우, 브라우저가 로컬 네트워크의 서버에 요청을 보내야 하므로 반드시 `.env` 파일에 실제 서버 IP를 설정해야 합니다.
+
+예:
+
+```env
+VITE_API_BASE=http://192.168.1.100:3001
+VITE_WS_BASE=ws://192.168.1.100:3001
+```
+
+기본값은 `http://localhost:3001`로, 로컬 개발 환경에서만 작동합니다.
+
+```env
+ALERT_CPU_THRESHOLD=85
+ALERT_MEMORY_THRESHOLD=80
+ALERT_DISK_THRESHOLD=90
+DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
+```
+
 ## API 흐름 개요
 
 ### 관리자 로그인

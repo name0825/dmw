@@ -3,6 +3,9 @@ import { evaluateAlerts, notifyAlerts } from './alerts.js'
 import { broadcastState } from './ws.js'
 import { evaluateDeviceStatus } from './deviceStatus.js'
 
+// Simple debounce mechanism to prevent spam alerts
+const lastAlertTimestamps = new Map<string, number>();
+
 export const updateOfflineStates = async () => {
   const devices = await db.all('SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC', ['ONLINE', 'OFFLINE', 'WAKE_TIMEOUT'])
 
@@ -25,7 +28,21 @@ export const monitorAlerts = async () => {
   `)
 
   const alerts = devices.flatMap((device: any) => evaluateAlerts(device))
-  if (alerts.length) {
-    await notifyAlerts(alerts)
+  
+  // Filter out alerts that are too frequent (debounce)
+  const now = Date.now();
+  const filteredAlerts = alerts.filter(alert => {
+    const key = `${alert.deviceId}-${alert.metric}`;
+    const lastTimestamp = lastAlertTimestamps.get(key) || 0;
+    const cooldownPeriod = 5 * 60 * 1000; // 5 minutes cooldown
+    if (now - lastTimestamp > cooldownPeriod) {
+      lastAlertTimestamps.set(key, now);
+      return true;
+    }
+    return false;
+  });
+  
+  if (filteredAlerts.length) {
+    await notifyAlerts(filteredAlerts)
   }
 }

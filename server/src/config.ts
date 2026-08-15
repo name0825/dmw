@@ -23,7 +23,7 @@ export const validateRuntimeConfig = () => {
   const runtimeJwtSecret = process.env.JWT_SECRET || JWT_SECRET
   const runtimeAdminPassword = process.env.ADMIN_PASSWORD || ADMIN_PASSWORD
 
-  if (!runtimeJwtSecret || runtimeJwtSecret === 'dev-secret') {
+  if (!runtimeJwtSecret || runtimeJwtSecret === 'dev-secret' || runtimeJwtSecret === 'change-me-in-production') {
     throw new Error('JWT_SECRET must be set in production mode.')
   }
 
