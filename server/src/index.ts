@@ -2,6 +2,7 @@ import 'dotenv/config'
 import Fastify from 'fastify'
 import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
+import rateLimit from '@fastify/rate-limit'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'node:crypto'
 import wol from 'wake_on_lan'
@@ -9,6 +10,7 @@ import wol from 'wake_on_lan'
 import { ADMIN_EMAIL, APP_ENV, COOKIE_SECURE, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { db, ensureAdmin } from './db.js'
 import { authMiddleware, createToken, findRefreshTokenMatch, getRefreshLookupId, revokeRefreshToken } from './auth.js'
+import { isValidMac, isValidIp, normalizeMac, normalizeIp } from './validation.js'
 import { evaluateAlerts } from './alerts.js'
 import { broadcastState, setupWebSocket } from './ws.js'
 import { updateOfflineStates, monitorAlerts } from './monitoring.js'
@@ -27,9 +29,26 @@ await app.register(cors, {
   credentials: true,
 })
 
+// Global rate limit: a sane default for all routes, keyed by client IP.
+// Sensitive endpoints (auth, pairing) get stricter per-route limits below.
+await app.register(rateLimit, {
+  max: 300,
+  timeWindow: '1 minute',
+  keyGenerator: (request: any) => request.ip,
+  errorResponseBuilder: (_request: any, context: any) => ({
+    message: `Too many requests, please try again in ${Math.ceil(context.ttl / 1000)}s`,
+  }),
+})
+
 app.addHook('preHandler', async (request: any, reply) => {
-  const skipAuthRoutes = ['/auth/login', '/health', '/agent/pair', '/agent/heartbeat']
-  if (!skipAuthRoutes.includes(request.url) && !request.url.startsWith('/auth/refresh')) {
+  // Routes that must be reachable without a valid Access Token.
+  // - /auth/login: issues the first token
+  // - /auth/refresh: re-issues an Access Token from the refresh cookie
+  // - /auth/logout: revokes the refresh token (may be called with an expired Access Token)
+  // - /health: liveness probe
+  // - /agent/pair, /agent/heartbeat: authenticated via API Key, not user JWT
+  const skipAuthRoutes = ['/auth/login', '/auth/refresh', '/auth/logout', '/health', '/agent/pair', '/agent/heartbeat']
+  if (!skipAuthRoutes.includes(request.url)) {
     await authMiddleware(request, reply)
   }
 })
@@ -39,7 +58,9 @@ await ensureAdmin()
 
 app.get('/health', async () => ({ status: 'ok' }))
 
-app.post('/auth/login', async (request, reply) => {
+app.post('/auth/login', {
+  config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+}, async (request, reply) => {
   const { email, password } = (request.body || {}) as { email?: string; password?: string }
   if (!email || !password) {
     reply.code(400).send({ message: 'Email and password are required' })
@@ -80,7 +101,9 @@ app.post('/auth/login', async (request, reply) => {
   return { accessToken }
 })
 
-app.post('/auth/refresh', async (request, reply) => {
+app.post('/auth/refresh', {
+  config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
+}, async (request, reply) => {
   const cookieToken = request.cookies?.refreshToken || ''
   const bodyToken = (request.body as { refreshToken?: string } | undefined)?.refreshToken || ''
   const refreshToken = bodyToken || cookieToken
@@ -193,9 +216,22 @@ app.post('/devices', async (request: any, reply) => {
     return
   }
 
+  if (!isValidMac(mac_address)) {
+    reply.code(400).send({ message: 'Invalid MAC address. Expected format AA:BB:CC:DD:EE:FF' })
+    return
+  }
+
+  if (!isValidIp(ip_address)) {
+    reply.code(400).send({ message: 'Invalid IP address. Expected IPv4 format (e.g. 192.168.0.20)' })
+    return
+  }
+
+  const normalizedMac = normalizeMac(mac_address) as string
+  const normalizedIp = normalizeIp(ip_address) as string
+
   const result = await db.run(
     'INSERT INTO devices (name, mac_address, ip_address, status, agent_paired, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?)',
-    [name, mac_address, ip_address, 'NOT_PAIRED', new Date().toISOString(), new Date().toISOString()],
+    [name, normalizedMac, normalizedIp, 'NOT_PAIRED', new Date().toISOString(), new Date().toISOString()],
   )
 
   const deviceId = Number((result as any).lastID)
@@ -211,7 +247,7 @@ app.post('/devices', async (request: any, reply) => {
   return { deviceId, pairingCode: code, expiresAt }
 })
 
-app.patch('/devices/:id', async (request: any) => {
+app.patch('/devices/:id', async (request: any, reply) => {
   const { id } = request.params
   const { name, mac_address, ip_address } = (request.body || {}) as {
     name?: string
@@ -227,12 +263,20 @@ app.patch('/devices/:id', async (request: any) => {
     values.push(name)
   }
   if (mac_address) {
+    if (!isValidMac(mac_address)) {
+      reply.code(400).send({ message: 'Invalid MAC address. Expected format AA:BB:CC:DD:EE:FF' })
+      return
+    }
     fields.push('mac_address = ?')
-    values.push(mac_address)
+    values.push(normalizeMac(mac_address) as string)
   }
   if (ip_address) {
+    if (!isValidIp(ip_address)) {
+      reply.code(400).send({ message: 'Invalid IP address. Expected IPv4 format (e.g. 192.168.0.20)' })
+      return
+    }
     fields.push('ip_address = ?')
-    values.push(ip_address)
+    values.push(normalizeIp(ip_address) as string)
   }
 
   if (!fields.length) {
@@ -254,7 +298,9 @@ app.delete('/devices/:id', async (request: any) => {
   return { message: 'Device deleted' }
 })
 
-app.post('/devices/:id/wake', async (request: any, reply) => {
+app.post('/devices/:id/wake', {
+  config: { rateLimit: { max: 10, timeWindow: '1 minute' } },
+}, async (request: any, reply) => {
   const { id } = request.params
   const device = await db.get('SELECT * FROM devices WHERE id = ?', [id])
 
@@ -293,7 +339,9 @@ app.post('/devices/:id/wake', async (request: any, reply) => {
   }
 })
 
-app.post('/agent/pair', async (request: any, reply) => {
+app.post('/agent/pair', {
+  config: { rateLimit: { max: 5, timeWindow: '1 minute' } },
+}, async (request: any, reply) => {
   const { ip, pairingCode } = (request.body || {}) as { ip?: string; pairingCode?: string }
   if (!ip || !pairingCode) {
     reply.code(400).send({ message: 'IP and pairing code required' })

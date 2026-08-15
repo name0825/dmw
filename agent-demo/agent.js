@@ -78,13 +78,46 @@ const sendHeartbeat = async (apiKey, deviceId) => {
   console.log('heartbeat sent:', response.message || 'ok')
 }
 
+// Exponential backoff with a cap, so a temporarily unreachable server does not
+// cause a tight retry loop. Returns the value produced by `fn` once it succeeds.
+const MAX_RETRY_DELAY_MS = Number(process.env.MAX_RETRY_DELAY_MS || 60000)
+
+const retryWithBackoff = async (fn, label, { maxAttempts = Infinity } = {}) => {
+  let attempt = 0
+  let delay = 1000
+
+  for (;;) {
+    attempt += 1
+    try {
+      return await fn()
+    } catch (error) {
+      if (attempt >= maxAttempts) {
+        throw error
+      }
+      console.warn(`[${label}] attempt ${attempt} failed: ${error.message}. Retrying in ${delay}ms...`)
+      await sleep(delay)
+      delay = Math.min(delay * 2, MAX_RETRY_DELAY_MS)
+    }
+  }
+}
+
 const main = async () => {
   console.log(`Connecting to ${SERVER_URL}`)
-  const apiKey = await pairWithServer()
+
+  // Pairing is a hard prerequisite: retry with backoff until the server is
+  // reachable and the code is accepted.
+  const apiKey = await retryWithBackoff(pairWithServer, 'pair')
   const deviceId = Number(process.env.DEVICE_ID || '1')
 
+  // Heartbeat loop: a single failed send must not crash the agent. Log and
+  // keep trying on the next tick; the server marks the device OFFLINE after
+  // the configured grace period.
   while (true) {
-    await sendHeartbeat(apiKey, deviceId)
+    try {
+      await sendHeartbeat(apiKey, deviceId)
+    } catch (error) {
+      console.warn(`[heartbeat] send failed: ${error.message}. Will retry next tick.`)
+    }
     await sleep(HEARTBEAT_INTERVAL_MS)
   }
 }

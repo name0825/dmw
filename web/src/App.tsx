@@ -19,6 +19,12 @@ type DeviceForm = {
   ip_address: string
 }
 
+const MAC_RE = /^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
+const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
+
+const isValidMac = (value: string) => MAC_RE.test(value.trim())
+const isValidIp = (value: string) => IPV4_RE.test(value.trim())
+
 export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
   const [login, setLogin] = useState({ email: '', password: '' })
@@ -72,6 +78,32 @@ export default function App() {
     }
   }
 
+  // On mount, try to restore the session using the httpOnly refresh cookie.
+  // If the refresh token is still valid, the server re-issues an Access Token
+  // and we load the dashboard. Otherwise we stay on the login screen.
+  const refreshSession = async () => {
+    try {
+      const res = await fetch(`${apiBase || ''}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+
+      if (!res.ok) return
+
+      const data = await res.json()
+      if (data.accessToken) {
+        setToken(data.accessToken)
+      }
+    } catch {
+      // Network error or server unreachable — stay logged out.
+    }
+  }
+
+  useEffect(() => {
+    refreshSession()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   useEffect(() => {
     if (token) {
       loadDevices()
@@ -115,6 +147,7 @@ export default function App() {
     const res = await fetch(`${apiBase || ''}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      credentials: 'include',
       body: JSON.stringify(login),
     })
 
@@ -126,6 +159,25 @@ export default function App() {
 
     setToken(data.accessToken)
     setMessage('로그인 성공')
+  }
+
+  const logoutUser = async () => {
+    try {
+      await fetch(`${apiBase || ''}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+    } catch {
+      // Even if the request fails, clear the local session below.
+    }
+
+    setToken('')
+    setDevices([])
+    setAlerts([])
+    setHistoryByDevice({})
+    setCreatedDevice(null)
+    setEditingId(null)
+    setMessage('로그아웃되었습니다.')
   }
 
   const createDevice = async () => {
@@ -158,6 +210,19 @@ export default function App() {
   const saveDevice = async () => {
     if (!token) {
       setMessage('먼저 로그인해야 합니다.')
+      return
+    }
+
+    if (!form.name.trim()) {
+      setMessage('디바이스 이름을 입력해 주세요.')
+      return
+    }
+    if (!isValidMac(form.mac_address)) {
+      setMessage('MAC 주소 형식이 올바르지 않습니다. (예: AA:BB:CC:DD:EE:FF)')
+      return
+    }
+    if (!isValidIp(form.ip_address)) {
+      setMessage('IP 주소 형식이 올바르지 않습니다. (예: 192.168.0.20)')
       return
     }
 
@@ -333,7 +398,7 @@ export default function App() {
           <h1>Device Manager Web</h1>
         </div>
         {token ? (
-          <button onClick={() => setToken('')}>로그아웃</button>
+          <button onClick={logoutUser}>로그아웃</button>
         ) : (
           <button onClick={loginUser}>로그인</button>
         )}
