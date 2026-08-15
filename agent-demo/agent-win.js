@@ -40,32 +40,52 @@ const requestJson = async (url, options = {}) => {
 const getWindowsMetrics = async () => {
   const { execSync } = require('node:child_process')
 
-  const cpu = execSync('wmic cpu get LoadPercentage /value', { encoding: 'utf8' })
-  const memory = execSync('wmic OS get FreePhysicalMemory /value', { encoding: 'utf8' })
-  const disk = execSync('wmic logicaldisk get FreeSpace,Size /value', { encoding: 'utf8' })
+  // Use PowerShell Get-CimInstance instead of `wmic`, which is removed by
+  // default on Windows 11 24H2+. A single query returns CPU, memory, and disk.
+  const ps = [
+    '$os = Get-CimInstance Win32_OperatingSystem',
+    '$cpu = (Get-CimInstance Win32_Processor | Measure-Object -Property LoadPercentage -Average).Average',
+    '$disk = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | Select-Object -First 1',
+    '[pscustomobject]@{',
+    '  Cpu = [int]$cpu',
+    '  FreeMem = [long]$os.FreePhysicalMemory',
+    '  TotalMem = [long]$os.TotalVisibleMemorySize',
+    '  FreeDisk = [long]$disk.FreeSpace',
+    '  TotalDisk = [long]$disk.Size',
+    '}',
+  ].join('; ')
 
-  const cpuMatch = cpu.match(/LoadPercentage=([0-9]+)/i)
-  const freeMemMatch = memory.match(/FreePhysicalMemory=([0-9]+)/i)
+  const raw = execSync(`powershell -NoProfile -NonInteractive -Command "${ps}"`, {
+    encoding: 'utf8',
+    windowsHide: true,
+  })
 
-  const cpuUsage = cpuMatch ? Number(cpuMatch[1]) : 0
-
-  let memoryUsage = 0
-  if (freeMemMatch) {
-    const freeMb = Number(freeMemMatch[1]) / 1024
-    const totalMb = 4096
-    memoryUsage = Math.max(0, Math.min(100, ((totalMb - freeMb) / totalMb) * 100))
+  // Parse the PowerShell object output:
+  //   Cpu : 12
+  //   FreeMem : 12345678
+  //   TotalMem : 8388608
+  //   FreeDisk : 123456789012
+  //   TotalDisk : 234567890123
+  const pick = (key) => {
+    const match = raw.match(new RegExp(`${key}\\s*:\\s*([0-9]+)`, 'i'))
+    return match ? Number(match[1]) : 0
   }
 
-  const diskMatch = [...disk.matchAll(/FreeSpace=([0-9]+)/gi)]
-  const sizeMatch = [...disk.matchAll(/Size=([0-9]+)/gi)]
+  const cpuUsage = pick('Cpu')
 
+  // FreePhysicalMemory / TotalVisibleMemorySize are in KB.
+  const freeKb = pick('FreeMem')
+  const totalKb = pick('TotalMem')
+  let memoryUsage = 0
+  if (totalKb > 0) {
+    memoryUsage = Math.max(0, Math.min(100, ((totalKb - freeKb) / totalKb) * 100))
+  }
+
+  const freeBytes = pick('FreeDisk')
+  const totalBytes = pick('TotalDisk')
   let diskUsage = 0
-  if (diskMatch.length && sizeMatch.length) {
-    const freeBytes = Number(diskMatch[0][1])
-    const totalBytes = Number(sizeMatch[0][1])
-    if (totalBytes > 0) {
-      diskUsage = Math.max(0, Math.min(100, ((totalBytes - freeBytes) / totalBytes) * 100))
-    }
+  if (totalBytes > 0) {
+    diskUsage = Math.max(0, Math.min(100, ((totalBytes - freeBytes) / totalBytes) * 100))
   }
 
   return {

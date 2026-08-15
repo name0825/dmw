@@ -15,6 +15,15 @@ export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@dmw.local'
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (APP_ENV === 'production' ? '' : 'admin123')
 export const CORS_ORIGIN = normalizeList(process.env.CORS_ORIGIN || process.env.FRONTEND_ORIGIN)
 
+// Secure flag for the refresh-token cookie. Defaults to true in production
+// (HTTPS/VPN) so the token is never sent over plain HTTP. Override with
+// COOKIE_SECURE=false only for local HTTP development.
+const cookieSecureRaw = process.env.COOKIE_SECURE
+export const COOKIE_SECURE =
+  cookieSecureRaw !== undefined
+    ? cookieSecureRaw === 'true'
+    : APP_ENV === 'production'
+
 export const validateRuntimeConfig = () => {
   const runtimeEnv = process.env.NODE_ENV || APP_ENV
 

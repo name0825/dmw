@@ -56,6 +56,7 @@ await db.exec(`
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     token_hash TEXT NOT NULL,
+    lookup_id TEXT,
     issued_at TEXT NOT NULL,
     expires_at TEXT NOT NULL,
     revoked INTEGER NOT NULL DEFAULT 0,
@@ -74,7 +75,11 @@ await db.exec(`
 
   CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
   CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_agent_key_hint ON devices(agent_key_hint);
+  CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_lookup_id ON refresh_tokens(lookup_id);
 `)
+
+// Clean up expired refresh tokens so the table does not grow unbounded.
+await db.run('DELETE FROM refresh_tokens WHERE expires_at < ?', [new Date().toISOString()])
 
 const refreshColumns = await db.all('PRAGMA table_info(refresh_tokens)')
 const hasUserId = refreshColumns.some((column: any) => column.name === 'user_id')

@@ -46,11 +46,31 @@ export const authMiddleware = async (request: any, reply: any) => {
   }
 }
 
+// Refresh tokens are 64-char hex strings (randomBytes(32)). The first 16 chars
+// are stored as a unique lookup_id so we can do a single indexed lookup instead
+// of bcrypt-comparing every active row (O(n) bcrypt = slow + DoS vector).
+export const REFRESH_LOOKUP_LEN = 16
+
+export const getRefreshLookupId = (refreshToken: string) => refreshToken.slice(0, REFRESH_LOOKUP_LEN)
+
 export const findRefreshTokenMatch = async (refreshToken: string) => {
-  const rows = await db.all('SELECT * FROM refresh_tokens WHERE revoked = 0')
-  for (const row of rows) {
+  // Fast path: single indexed lookup by lookup_id, then one bcrypt compare.
+  const lookupId = getRefreshLookupId(refreshToken)
+  const row = await db.get(
+    'SELECT * FROM refresh_tokens WHERE lookup_id = ? AND revoked = 0',
+    [lookupId],
+  )
+  if (row) {
     const ok = await bcrypt.compare(refreshToken, row.token_hash)
     if (ok) return row
+    return null
+  }
+
+  // Fallback for legacy tokens issued before lookup_id existed (no lookup_id set).
+  const legacyRows = await db.all('SELECT * FROM refresh_tokens WHERE lookup_id IS NULL AND revoked = 0')
+  for (const legacy of legacyRows) {
+    const ok = await bcrypt.compare(refreshToken, legacy.token_hash)
+    if (ok) return legacy
   }
   return null
 }

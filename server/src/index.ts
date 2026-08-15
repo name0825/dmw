@@ -6,9 +6,9 @@ import bcrypt from 'bcryptjs'
 import { randomBytes } from 'node:crypto'
 import wol from 'wake_on_lan'
 
-import { ADMIN_EMAIL, APP_ENV, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
+import { ADMIN_EMAIL, APP_ENV, COOKIE_SECURE, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { db, ensureAdmin } from './db.js'
-import { authMiddleware, createToken, findRefreshTokenMatch, revokeRefreshToken } from './auth.js'
+import { authMiddleware, createToken, findRefreshTokenMatch, getRefreshLookupId, revokeRefreshToken } from './auth.js'
 import { evaluateAlerts } from './alerts.js'
 import { broadcastState, setupWebSocket } from './ws.js'
 import { updateOfflineStates, monitorAlerts } from './monitoring.js'
@@ -17,8 +17,11 @@ const app = Fastify({ logger: false })
 await app.register(cookie)
 await app.register(cors, {
   origin: (origin, callback) => {
+    // Only allow explicitly configured origins.
+    // Local dev origins are always permitted (harmless, browser-enforced to localhost).
+    // In production, CORS_ORIGIN must be set to the actual frontend origin(s).
     const allowedOrigins = new Set([...CORS_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'])
-    const isAllowed = !origin || allowedOrigins.has(origin) || !APP_ENV || APP_ENV === 'development'
+    const isAllowed = !origin || allowedOrigins.has(origin)
     callback(null, isAllowed)
   },
   credentials: true,
@@ -58,18 +61,19 @@ app.post('/auth/login', async (request, reply) => {
   const accessToken = createToken(user.email)
   const refreshToken = randomBytes(32).toString('hex')
   const refreshHash = await bcrypt.hash(refreshToken, 10)
+  const lookupId = getRefreshLookupId(refreshToken)
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString()
 
   await db.run(
-    'INSERT INTO refresh_tokens (user_id, token_hash, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, 0)',
-    [user.id, refreshHash, new Date().toISOString(), expiresAt],
+    'INSERT INTO refresh_tokens (user_id, token_hash, lookup_id, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, ?, 0)',
+    [user.id, refreshHash, lookupId, new Date().toISOString(), expiresAt],
   )
 
   reply.setCookie('refreshToken', refreshToken, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: false,
+    secure: COOKIE_SECURE,
     maxAge: 60 * 60 * 24 * 7,
   })
 
@@ -103,19 +107,20 @@ app.post('/auth/refresh', async (request, reply) => {
   const accessToken = createToken(email)
   const nextRefreshToken = randomBytes(32).toString('hex')
   const refreshHash = await bcrypt.hash(nextRefreshToken, 10)
+  const nextLookupId = getRefreshLookupId(nextRefreshToken)
   const expiresAt = new Date(Date.now() + 1000 * 60 * 60 * 24 * 7).toISOString()
 
   await db.run('UPDATE refresh_tokens SET revoked = 1 WHERE id = ?', [matched.id])
   await db.run(
-    'INSERT INTO refresh_tokens (user_id, token_hash, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, 0)',
-    [matched.user_id, refreshHash, new Date().toISOString(), expiresAt],
+    'INSERT INTO refresh_tokens (user_id, token_hash, lookup_id, issued_at, expires_at, revoked) VALUES (?, ?, ?, ?, ?, 0)',
+    [matched.user_id, refreshHash, nextLookupId, new Date().toISOString(), expiresAt],
   )
 
   reply.setCookie('refreshToken', nextRefreshToken, {
     httpOnly: true,
     sameSite: 'lax',
     path: '/',
-    secure: false,
+    secure: COOKIE_SECURE,
     maxAge: 60 * 60 * 24 * 7,
   })
 
