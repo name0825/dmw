@@ -1,7 +1,17 @@
+import fs from 'node:fs'
+import path from 'node:path'
 import sqlite3 from 'sqlite3'
 import { open } from 'sqlite'
 import bcrypt from 'bcryptjs'
+
 import { ADMIN_EMAIL, ADMIN_PASSWORD, DB_PATH } from './config.js'
+
+/**
+ * SQLite connection used throughout the application for user, device, and telemetry persistence.
+ * The data directory is created eagerly so a fresh checkout can initialize without manual setup.
+ */
+const databaseDirectory = path.dirname(DB_PATH)
+fs.mkdirSync(databaseDirectory, { recursive: true })
 
 export const db = await open({
   filename: DB_PATH,
@@ -109,6 +119,10 @@ if (!hasUserId) {
   }
 }
 
+/**
+ * Ensure an admin account exists for the configured administrator email.
+ * This is a bootstrap guard that runs during startup and keeps the app usable in a fresh environment.
+ */
 export const ensureAdmin = async () => {
   const existing = await db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL])
 

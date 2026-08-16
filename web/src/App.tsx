@@ -1,30 +1,27 @@
 import { useEffect, useState } from 'react'
 
-type Device = {
-  id: number
-  name: string
-  mac_address: string
-  ip_address: string
-  status: string
-  agent_paired: boolean
-  last_seen?: string
-  cpu_usage?: number
-  memory_usage?: number
-  disk_usage?: number
-}
+import { getApiBaseUrl, getWebSocketBaseUrl, mapHistory, normalizeAlerts, normalizeDevices, requestJson } from './api'
+import { DEFAULT_AGENT_STATE, IPV4_RE, MAC_RE } from './constants'
+import type { AgentState, AlertItem, Device, DeviceForm, DeviceHistoryEntry } from './types'
 
-type DeviceForm = {
-  name: string
-  mac_address: string
-  ip_address: string
-}
-
-const MAC_RE = /^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
-const IPV4_RE = /^(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)(\.(25[0-5]|2[0-4]\d|1\d\d|[1-9]?\d)){3}$/
-
+/**
+ * Validate a MAC address in canonical `AA:BB:CC:DD:EE:FF` form.
+ * @param {string} value - MAC address candidate.
+ * @returns {boolean} True when the format is valid.
+ */
 const isValidMac = (value: string) => MAC_RE.test(value.trim())
+
+/**
+ * Validate a dotted IPv4 address.
+ * @param {string} value - IP candidate.
+ * @returns {boolean} True when the IPv4 format is valid.
+ */
 const isValidIp = (value: string) => IPV4_RE.test(value.trim())
 
+/**
+ * Main dashboard view for the DMW frontend.
+ * The component coordinates auth state, device management, and agent demo flows while keeping UI logic compact.
+ */
 export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
   const [login, setLogin] = useState({ email: '', password: '' })
@@ -33,25 +30,20 @@ export default function App() {
   const [token, setToken] = useState('')
   const [message, setMessage] = useState('')
   const [createdDevice, setCreatedDevice] = useState<{ pairingCode?: string; deviceId?: number; expiresAt?: string } | null>(null)
-  const [historyByDevice, setHistoryByDevice] = useState<Record<number, Array<{ timestamp: string; cpu_usage: number; memory_usage: number; disk_usage: number }>>>({})
-  const [alerts, setAlerts] = useState<Array<{ deviceId: number; level: string; message: string; metric: string; value: number }>>([])
-  const [agentState, setAgentState] = useState({
-    serverUrl: import.meta.env.VITE_API_BASE || 'http://localhost:3001',
-    pairingCode: '',
-    apiKey: '',
-    deviceId: null as number | null,
-  })
+  const [historyByDevice, setHistoryByDevice] = useState<Record<number, DeviceHistoryEntry[]>>({})
+  const [alerts, setAlerts] = useState<AlertItem[]>([])
+  const [agentState, setAgentState] = useState<AgentState>(DEFAULT_AGENT_STATE)
 
-  const apiBase = (import.meta.env.VITE_API_BASE || 'http://localhost:3001').replace(/\/$/, '')
-  const wsBase = (
-    import.meta.env.VITE_WS_BASE ||
-    `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
-  ).replace(/\/$/, '')
+  const apiBase = getApiBaseUrl()
+  const wsBase = getWebSocketBaseUrl()
 
+  /**
+   * Load device metadata and alert summaries for the current user.
+   */
   const loadDevices = async () => {
     if (!token) return
 
-    const res = await fetch(`${apiBase || ''}/devices`, {
+    const { res, data } = await requestJson(`${apiBase}/devices`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -60,38 +52,28 @@ export default function App() {
       return
     }
 
-    const data = await res.json()
-    setDevices((data.devices ?? []).map((device: Device) => ({
-      ...device,
-      cpu_usage: Number(device.cpu_usage ?? 0),
-      memory_usage: Number(device.memory_usage ?? 0),
-      disk_usage: Number(device.disk_usage ?? 0),
-    })))
+    setDevices(normalizeDevices(data?.devices ?? []))
 
-    const alertRes = await fetch(`${apiBase || ''}/alerts`, {
+    const alertResult = await requestJson(`${apiBase}/alerts`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
-    if (alertRes.ok) {
-      const alertData = await alertRes.json()
-      setAlerts(alertData.alerts ?? [])
+    if (alertResult.res.ok) {
+      setAlerts(normalizeAlerts(alertResult.data?.alerts ?? []))
     }
   }
 
-  // On mount, try to restore the session using the httpOnly refresh cookie.
-  // If the refresh token is still valid, the server re-issues an Access Token
-  // and we load the dashboard. Otherwise we stay on the login screen.
+  /**
+   * Restore the session using the refresh-token cookie when present.
+   */
   const refreshSession = async () => {
     try {
-      const res = await fetch(`${apiBase || ''}/auth/refresh`, {
+      const { res, data } = await requestJson(`${apiBase}/auth/refresh`, {
         method: 'POST',
         credentials: 'include',
       })
 
-      if (!res.ok) return
-
-      const data = await res.json()
-      if (data.accessToken) {
+      if (res.ok && data?.accessToken) {
         setToken(data.accessToken)
       }
     } catch {
@@ -105,9 +87,8 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    if (token) {
-      loadDevices()
-    }
+    if (!token) return
+    void loadDevices()
   }, [token])
 
   useEffect(() => {
@@ -123,10 +104,10 @@ export default function App() {
         try {
           const payload = JSON.parse(event.data)
           if (payload.type === 'devices-updated' && Array.isArray(payload.devices)) {
-            setDevices(payload.devices)
+            setDevices(normalizeDevices(payload.devices))
           }
         } catch {
-          // ignore parse errors
+          // Ignore malformed WS payloads while the connection is reconnecting.
         }
       }
 
@@ -143,17 +124,19 @@ export default function App() {
     }
   }, [token, wsBase])
 
+  /**
+   * Authenticate with the admin username and password.
+   */
   const loginUser = async () => {
-    const res = await fetch(`${apiBase || ''}/auth/login`, {
+    const { res, data } = await requestJson(`${apiBase}/auth/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       credentials: 'include',
       body: JSON.stringify(login),
     })
 
-    const data = await res.json()
     if (!res.ok) {
-      setMessage(data.message || '로그인 실패')
+      setMessage(data?.message || '로그인 실패')
       return
     }
 
@@ -161,9 +144,12 @@ export default function App() {
     setMessage('로그인 성공')
   }
 
+  /**
+   * Clear local session data and revoke the refresh token on the server when possible.
+   */
   const logoutUser = async () => {
     try {
-      await fetch(`${apiBase || ''}/auth/logout`, {
+      await requestJson(`${apiBase}/auth/logout`, {
         method: 'POST',
         credentials: 'include',
       })
@@ -180,33 +166,9 @@ export default function App() {
     setMessage('로그아웃되었습니다.')
   }
 
-  const createDevice = async () => {
-    if (!token) {
-      setMessage('먼저 로그인해야 합니다.')
-      return
-    }
-
-    const res = await fetch(`${apiBase}/devices`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(form),
-    })
-
-    const data = await res.json()
-    if (!res.ok) {
-      setMessage(data.message || '디바이스 등록 실패')
-      return
-    }
-
-    setCreatedDevice(data)
-    setMessage(`디바이스 등록 완료. 페어링 코드: ${data.pairingCode}`)
-    setForm({ name: '', mac_address: '', ip_address: '' })
-    await loadDevices()
-  }
-
+  /**
+   * Persist a new device and issue a pairing code.
+   */
   const saveDevice = async () => {
     if (!token) {
       setMessage('먼저 로그인해야 합니다.')
@@ -227,9 +189,9 @@ export default function App() {
     }
 
     const method = editingId !== null ? 'PATCH' : 'POST'
-    const endpoint = editingId !== null ? `${apiBase || ''}/devices/${editingId}` : `${apiBase || ''}/devices`
+    const endpoint = editingId !== null ? `${apiBase}/devices/${editingId}` : `${apiBase}/devices`
 
-    const res = await fetch(endpoint, {
+    const { res, data } = await requestJson(endpoint, {
       method,
       headers: {
         'Content-Type': 'application/json',
@@ -238,30 +200,42 @@ export default function App() {
       body: JSON.stringify(form),
     })
 
-    const data = await res.json()
     if (!res.ok) {
-      setMessage(data.message || '디바이스 저장 실패')
+      setMessage(data?.message || '디바이스 저장 실패')
       return
     }
 
     setMessage(editingId !== null ? '디바이스 수정 완료' : '디바이스 등록 완료')
     setForm({ name: '', mac_address: '', ip_address: '' })
     setEditingId(null)
-    setCreatedDevice(null)
+    if (method === 'POST') {
+      setCreatedDevice(data)
+    } else {
+      setCreatedDevice(null)
+    }
     await loadDevices()
   }
 
+  /**
+   * Delete a device record and refresh the dashboard.
+   * @param {number} id - Device identifier.
+   */
   const deleteDevice = async (id: number) => {
-    const res = await fetch(`${apiBase || ''}/devices/${id}`, {
+    const { res, data } = await requestJson(`${apiBase}/devices/${id}`, {
       method: 'DELETE',
       headers: { Authorization: `Bearer ${token}` },
     })
 
-    const data = await res.json()
-    setMessage(data.message || '디바이스 삭제 완료')
-    await loadDevices()
+    if (res.ok) {
+      setMessage(data?.message || '디바이스 삭제 완료')
+      await loadDevices()
+    }
   }
 
+  /**
+   * Populate the device form for editing.
+   * @param {Device} device - Current device record.
+   */
   const editDevice = (device: Device) => {
     setEditingId(device.id)
     setForm({
@@ -271,21 +245,28 @@ export default function App() {
     })
   }
 
+  /**
+   * Trigger a WOL magic packet for a paired device.
+   * @param {number} id - Device identifier.
+   */
   const wakeDevice = async (id: number) => {
-    const res = await fetch(`${apiBase || ''}/devices/${id}/wake`, {
+    const { res, data } = await requestJson(`${apiBase}/devices/${id}/wake`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token}` },
     })
 
-    const data = await res.json()
-    setMessage(data.message || 'Wake 요청 전송')
+    setMessage(data?.message || 'Wake 요청 전송')
     if (res.ok) {
       await loadDevices()
     }
   }
 
+  /**
+   * Load a device’s recent metric history for chart display.
+   * @param {number} deviceId - Device identifier.
+   */
   const loadHistory = async (deviceId: number) => {
-    const res = await fetch(`${apiBase || ''}/devices/${deviceId}/history`, {
+    const { res, data } = await requestJson(`${apiBase}/devices/${deviceId}/history`, {
       headers: { Authorization: `Bearer ${token}` },
     })
 
@@ -294,13 +275,12 @@ export default function App() {
       return
     }
 
-    const data = await res.json()
-    setHistoryByDevice((prev) => ({
-      ...prev,
-      [deviceId]: data.history ?? [],
-    }))
+    setHistoryByDevice((prev) => mapHistory(prev, deviceId, data?.history ?? []))
   }
 
+  /**
+   * Pair a demo agent by exchanging its pairing code for an API key.
+   */
   const pairAgent = async () => {
     const pairingCode = agentState.pairingCode || createdDevice?.pairingCode || ''
     if (!pairingCode) {
@@ -308,15 +288,14 @@ export default function App() {
       return
     }
 
-    const res = await fetch(`${agentState.serverUrl || ''}/agent/pair`, {
+    const { res, data } = await requestJson(`${agentState.serverUrl}/agent/pair`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ip: '127.0.0.1', pairingCode }),
     })
 
-    const data = await res.json()
     if (!res.ok) {
-      setMessage(data.message || '페어링 실패')
+      setMessage(data?.message || '페어링 실패')
       return
     }
 
@@ -325,6 +304,9 @@ export default function App() {
     await loadDevices()
   }
 
+  /**
+   * Simulate a heartbeat from the paired agent using the issued API key.
+   */
   const sendHeartbeat = async () => {
     if (!agentState.apiKey) {
       setMessage('먼저 에이전트를 페어링해 주세요.')
@@ -338,7 +320,7 @@ export default function App() {
       deviceId: agentState.deviceId,
     }
 
-    const res = await fetch(`${agentState.serverUrl || ''}/agent/heartbeat`, {
+    const { res, data } = await requestJson(`${agentState.serverUrl}/agent/heartbeat`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -347,9 +329,8 @@ export default function App() {
       body: JSON.stringify(payload),
     })
 
-    const data = await res.json()
     if (!res.ok) {
-      setMessage(data.message || 'heartbeat 전송 실패')
+      setMessage(data?.message || 'heartbeat 전송 실패')
       return
     }
 
@@ -364,8 +345,14 @@ export default function App() {
     notPaired: devices.filter((device) => !device.agent_paired).length,
   }
 
+  /**
+   * Render a compact SVG chart for a target metric over recent device history.
+   * @param {DeviceHistoryEntry[]} history - Recent history entries.
+   * @param {'cpu_usage' | 'memory_usage' | 'disk_usage'} metric - Metric to visualize.
+   * @returns {JSX.Element | null} SVG polyline or null when empty.
+   */
   const renderTrendChart = (
-    history: Array<{ timestamp: string; cpu_usage: number; memory_usage: number; disk_usage: number }>,
+    history: DeviceHistoryEntry[],
     metric: 'cpu_usage' | 'memory_usage' | 'disk_usage',
   ) => {
     if (!history.length) return null
@@ -409,18 +396,11 @@ export default function App() {
           <h2>관리자 로그인</h2>
           <label>
             이메일
-            <input
-              value={login.email}
-              onChange={(e) => setLogin({ ...login, email: e.target.value })}
-            />
+            <input value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} />
           </label>
           <label>
             비밀번호
-            <input
-              type="password"
-              value={login.password}
-              onChange={(e) => setLogin({ ...login, password: e.target.value })}
-            />
+            <input type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} />
           </label>
           <button onClick={loginUser}>로그인</button>
         </section>
@@ -552,9 +532,7 @@ export default function App() {
                       </div>
                     </div>
                     <div className="device-meta">
-                      <span className={`badge ${String(device.status).toLowerCase()}`}>
-                        {device.status}
-                      </span>
+                      <span className={`badge ${String(device.status).toLowerCase()}`}>{device.status}</span>
                       <span>{device.agent_paired ? 'Paired' : 'Not Paired'}</span>
                     </div>
                     <div className="device-actions">

@@ -1,6 +1,7 @@
 node_modules
 server/dist
 server/data
+data/
 web/dist
 .env
 .env.*
@@ -12,3 +13,4 @@ agent-demo/.env.*
 !agent-demo/.env.win.example
 .DS_Store
 npm-debug.log*
+REFACTOR_LOG.md
