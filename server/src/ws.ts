@@ -21,14 +21,30 @@ export const broadcastState = async () => {
   }
 }
 
+/**
+ * 핸드셰이크 헤더에서 인증 토큰을 추출한다.
+ * 토큰은 Sec-WebSocket-Protocol 서브프로토콜로 전달되므로 URL 쿼리/
+ * 히스토리/프록시 로그에 노출되지 않는다. 서브프로토콜 헤더는
+ * 쉼표로 구분된 여러 값을 포함할 수 있어 첫 항목으로 취한다.
+ * @param {any} request - 핸드셰이크 요청
+ * @returns {string} 인증 토큰 (없으면 빈 문자열)
+ */
 const getAuthTokenFromRequest = (request: any) => {
-  const header = request.headers.authorization || ''
-  if (header.startsWith('Bearer ')) {
-    return header.slice(7)
+  const protocolHeader =
+    request.headers['sec-websocket-protocol'] ||
+    request.headers['Sec-WebSocket-Protocol'] ||
+    ''
+
+  const firstProtocol = String(protocolHeader).split(',')[0]?.trim() || ''
+  if (!firstProtocol) return ''
+
+  // JWT는 세그먼트 3개(점 2개)의 base64url 문자열이므로, 서브프로토콜
+  // 값이 토큰인지(보통 protocol name은 점 포함 불가) 간단히 판별한다.
+  if (!/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(firstProtocol)) {
+    return ''
   }
 
-  const url = new URL(request.url || '/', 'http://localhost')
-  return url.searchParams.get('token') || ''
+  return firstProtocol
 }
 
 export const setupWebSocket = (server: any) => {

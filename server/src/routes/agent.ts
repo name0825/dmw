@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto'
 
 import { db } from '../db.js'
 import { broadcastState } from '../ws.js'
+import { isValidIp, normalizeIp } from '../validation.js'
 
 const AGENT_PAIR_RATE_LIMIT = { max: 5, timeWindow: '1 minute' }
 
@@ -46,6 +47,13 @@ export const registerAgentRoutes = (app: any) => {
       return
     }
 
+    // FIXED: agent가 보고한 IP를 검증한다. 기존엔 형식 검증 없이 저장되어
+    // WOL 브로드캐스트 주소 계산(subnetBroadcast)이 틀어질 수 있었다.
+    if (!isValidIp(ip)) {
+      reply.code(400).send({ message: 'Invalid IP address. Expected IPv4 format (e.g. 192.168.0.20)' })
+      return
+    }
+
     const activeCode = await db.get(
       'SELECT * FROM pairing_codes WHERE code = ? AND used_at IS NULL AND expires_at > ? ORDER BY created_at DESC LIMIT 1',
       [pairingCode, new Date().toISOString()],
@@ -65,12 +73,29 @@ export const registerAgentRoutes = (app: any) => {
     const apiKey = randomBytes(24).toString('hex')
     const apiKeyHash = await bcrypt.hash(apiKey, 10)
     const apiKeyHint = apiKey.slice(0, API_KEY_HINT_LEN)
+    const normalizedIp = normalizeIp(ip) as string
     const now = new Date().toISOString()
 
-    await db.run(
-      'UPDATE devices SET agent_key_hash = ?, agent_key_hint = ?, agent_paired = 1, paired_at = ?, last_seen = ?, status = ?, updated_at = ? WHERE id = ?',
-      [apiKeyHash, apiKeyHint, now, now, STATUS_ONLINE, now, device.id],
-    )
+    // FIXED: 페어링 시 agent가 보고한 실제 IP로 device.ip_address를 갱신한다.
+    // DHCP 환경에서 등록 당시 IP와 agent 실제 IP가 다르면 WOL 브로드캐스트
+    // 주소 계산이 틀어져 재기동이 안 될 수 있기 때문이다.
+    try {
+      await db.run(
+        'UPDATE devices SET agent_key_hash = ?, agent_key_hint = ?, ip_address = ?, agent_paired = 1, paired_at = ?, last_seen = ?, status = ?, updated_at = ? WHERE id = ?',
+        [apiKeyHash, apiKeyHint, normalizedIp, now, now, STATUS_ONLINE, now, device.id],
+      )
+    } catch (error: any) {
+      // FIXED: agent_key_hint에 UNIQUE INDEX가 걸려 있어 다른 기기와의
+      // 충돌 시 예외가 그대로 500 + SQLite 에러 메시지로 노출될 수 있다.
+      // 충돌 감지 시 502 형태의 안전한 메시지로, 그 외 에러는 500으로 돌려준다.
+      const message = String(error?.message || '')
+      if (message.includes('UNIQUE constraint failed') && message.includes('agent_key_hint')) {
+        reply.code(502).send({ message: 'Pairing failed due to a key conflict, please retry' })
+        return
+      }
+      throw error
+    }
+
     await db.run('UPDATE pairing_codes SET used_at = ? WHERE id = ?', [now, activeCode.id])
     await broadcastState()
 

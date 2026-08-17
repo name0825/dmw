@@ -98,7 +98,8 @@ export default function App() {
     let reconnectTimer: number | null = null
 
     const connect = () => {
-      socket = new WebSocket(`${wsBase}?token=${encodeURIComponent(token)}`)
+      // 토큰을 서브프로토콜로 전달해 URL/히스토리/프록시 로그 노출을 차단한다.
+      socket = new WebSocket(wsBase, [token])
 
       socket.onmessage = (event) => {
         try {
