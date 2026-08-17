@@ -1,281 +1,211 @@
 # DMW (Device Manager Web)
 
-DMW는 로컬 네트워크 내 장치를 웹 UI에서 관리하고, Wake-on-LAN, 에이전트 기반 상태 수집, 실시간 리소스 모니터링, 알림을 통합 제공하는 개인용 디바이스 관리 서비스입니다.
+DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LAN, 에이전트 기반 상태 수집, 실시간 리소스 모니터링, 임계치 알림을 통합 제공하는 개인용 디바이스 관리 웹 서비스입니다.
 
-## 프로젝트 개요
+## 📋 프로젝트 개요
 
-- 목적: 홈/사무실 네트워크 장치 관리 간소화
-- 핵심 기능: 장치 등록, 페어링, 상태 모니터링, WOL 전원 제어, 실시간 대시보드, 임계치 알림
-- 기술 스택: Node.js, TypeScript, Fastify, React, Vite, SQLite, WebSocket, JWT, bcrypt
-- 실행 환경: 로컬 개발, Docker Compose, 프로덕션 배포용 런타임 스크립트 준비
+| 항목 | 설명 |
+|------|------|
+| **목적** | 홈/사무실 네트워크 장치 관리 간소화 |
+| **핵심 기능** | 장치 등록/수정/삭제, WOL 전원 제어, 실시간 대시보드, 임계치 알림 |
+| **기술 스택** | Node.js, TypeScript, Fastify, React, Vite, SQLite, WebSocket, JWT, bcrypt |
+| **실행 환경** | 로컬 개발, Docker Compose, 프로덕션 배포용 런타임 스크립트 |
+| **버전** | v0.4 |
 
-## 주요 기능
+## 🚀 주요 기능
 
-- 관리자 로그인 및 JWT 기반 인증
-- Refresh Token 저장 및 rotation 처리
-- 디바이스 등록 / 수정 / 삭제
-- 일회용 페어링 코드 발급 및 만료 처리
-- 에이전트 페어링 및 API Key 기반 인증
-- WOL 매직 패킷 전송
-- heartbeat 기반 온라인 / 오프라인 / WAKE_TIMEOUT 판단
-- CPU / Memory / Disk 사용량 수집 및 최근 추세 표시
-- 임계치 기반 경고 평가 및 webhook 알림
-- WebSocket 실시간 상태 전달
-- SQLite 기반 데이터 저장 및 영속화
-- Linux/macOS, Windows 에이전트 데모 지원
+### 인증 및 보안
+- **JWT 기반 인증**: Access Token (1 일 유효) + Refresh Token (7 일 쿠키 저장)
+- **Refresh Token Rotation**: 보안 강화 및 만료 처리
+- **bcrypt 해싱**: 비밀번호 평문 저장 방지
 
-## 저장소 구조
+### 디바이스 관리
+- **CRUD 연동**: 등록 / 수정 / 삭제
+- **일회용 페어링 코드**: 10 분 자동 만료
+- **에이전트 페어링**: 서버 IP + 페어링 코드 기반 등록
+- **API Key 인증**: 에이전트 간 통신 보안 (bcrypt 기반 키 힌트 최적화)
 
-```text
+### 상태 모니터링
+- **WOL 매직 패킷 전송**: 포트 9 브로드캐스트
+- **heartbeat 기반 상태 판정**:
+  - ONLINE: 마지막 heartbeat 10 초 이내
+  - OFFLINE: 30 초 이상 heartbeat 미보내
+  - WAKE_TIMEOUT: WOL 후 3 분 이내 상태 변경 없음
+- **CPU / 메모리 / 디스크 사용량**: 10 초 간격 수집
+- **WebSocket 실시간 전달**: 클라이언트 자동 업데이트
+
+### 알림 시스템
+- **임계치 기반 경보**: 환경 변수로 커스터마이징 가능
+  - CPU: 85% 초과 → critical
+  - 메모리: 80% 초과 → warning
+  - 디스크: 90% 초과 → warning
+- **5 분 쿨다운**: 스팸 알림 방지
+
+## 📦 기술적 특징
+
+- **모듈화된 라우트 아키텍처**: 인증/기기/에이전트 도메인 분리 (SRP 준수)
+- **입력 검증**: MAC/IP 정규화, 유효값 범위 체크 (0~100)
+- **Rate Limiting**: 공개 라우트 DoS 방어
+- **Docker Compose**: 서버 + 프론트엔드 한 번으로 실행
+- **Health Check**: 컨테이너 자동 재시작 지원
+- **Graceful Error Handling**: 500 오류 시 내부 정보 누출 방지
+
+## 📁 저장소 구조
+
+```
 DMW/
-├── server/
+├── server/                     # Fastify 백엔드
 │   ├── src/
-│   │   ├── alerts.ts
-│   │   ├── auth.ts
-│   │   ├── config.ts
-│   │   ├── db.ts
-│   │   ├── deviceStatus.ts
-│   │   ├── index.ts
-│   │   ├── monitoring.ts
-│   │   ├── ws.ts
-│   │   └── *.test.ts
-│   ├── .env.example
+│   │   ├── alerts.ts           # 임계치 기반 경보 평가
+│   │   ├── auth.ts             # JWT 토큰 발급/검증, 공개 라우트 정의
+│   │   ├── config.ts           # 환경 변수 로드, 런타임 보안 검증
+│   │   ├── db.ts               # SQLite 연결 + bootstrap 헬퍼
+│   │   ├── deviceStatus.ts     # ONLINE/OFFLINE/WAKE_TIMEOUT 상태 판정
+│   │   ├── index.ts            # 앱 초기화 (라우트 등록 + 스케줄러)
+│   │   ├── monitoring.ts       # 상태 업데이트 + 경보 모니터링 스케줄러
+│   │   ├── validation.ts       # MAC/IP 입력 정규화 유효성 검사
+│   │   ├── ws.ts               # WebSocket 클라이언트 관리 + 브로드캐스트
+│   │   ├── routes/             # 도메인별 라우트
+│   │   │   ├── auth.ts        # /auth/login/refresh/logout
+│   │   │   ├── devices.ts     # /dashboard/devices/wake/alerts
+│   │   │   └── agent.ts       # /agent/pair/heartbeat
+│   │   ├── db/
+│   │   │   ├── index.ts       # Barrel module (db + ensureAdmin)
+│   │   │   └── schema.ts      # 6 테이블 생성 (users, devices, pairing_codes, metrics, refresh_tokens, alerts)
+│   │   └── *.test.ts           # Unit 테스트
+│   ├── Dockerfile
 │   ├── package.json
 │   └── tsconfig.json
-├── web/
-│   └── src/
-├── agent-demo/
-│   ├── agent.js
-│   ├── agent-win.js
-│   └── .env.example
-├── docker-compose.yml
-├── start-prod.sh
-├── start-prod.ps1
-├── start-prod.cmd
-├── project.md
-├── package.json
-├── README.md
+├── web/                        # React 프론트엔드 (Vite)
+│   ├── src/
+│   │   ├── App.tsx             # 메인 앱
+│   │   ├── api.ts              # API 호출 헬퍼
+│   │   ├── constants.ts        # 상수 정의
+│   │   ├── main.tsx            # 앱 진입점
+│   │   ├── styles.css          # 스타일
+│   │   └── types.ts            # TypeScript 타입
+│   ├── Dockerfile
+│   ├── nginx.conf              # 프론트엔드 역프록시 설정
+│   ├── vite.config.ts
+│   ├── package.json
+│   └── tsconfig.json
+├── agent-demo/                 # 에이전트 데모 (실제 에이전트는 OS 별 별도 프로젝트)
+│   ├── agent.js                # Linux/macOS 에이전트
+│   ├── agent-win.js            # Windows 에이전트
+│   └── demo-flow.js            # 서버 + 에이전트 연동 데모
+├── docker-compose.yml          # 서버 + 프론트엔드 컨테이너 오케스트레이션
+├── start.sh                   # 통합 스타트업 스크립트 (Linux/macOS): start.sh [dev|prod|agent]
+├── start.ps1                  # 통합 스타트업 스크립트 (Windows PowerShell): .\start.ps1 [dev|prod|agent]
+├── start.cmd                  # 통합 스타트업 스크립트 (Windows CMD): start.cmd [dev|prod|agent]
+├── project.md                  # 상세 기획서
+├── REFACTOR_LOG.md             # 최근 리팩토링 및 버그 수정 로그
+├── package.json                # 루트 workspaces
+├── README.md                   # 이 파일
 └── .gitignore
 ```
 
-## 빠른 시작
+## 🏃 빠른 시작
 
-### 1) 의존성 설치
+### 1️⃣ 의존성 설치
 
 ```bash
 npm install
 ```
 
-### 2) 환경 변수 준비
+### 2️⃣ 환경 변수 준비
 
 ```bash
 copy server\.env.example server\.env
 ```
 
-개발 환경에서는 아래 값이 기본으로 사용됩니다.
+개발 환경 기본값:
 
-- `ADMIN_EMAIL=admin@dmw.local`
-- `ADMIN_PASSWORD=admin123`
-- `JWT_SECRET=dev-secret`
+| 환경 변수 | 기본값 | 설명 |
+|----------|--------|------|
+| `ADMIN_EMAIL` | `admin@dmw.local` | 관리자 이메일 |
+| `ADMIN_PASSWORD` | `admin123` | 관리자 비밀번호 |
+| `JWT_SECRET` | `dev-secret` | JWT 서명 비밀키 |
+| `CORS_ORIGIN` | `http://localhost:5173,http://127.0.0.1:5173` | 프론트엔드 허용_origin |
+| `COOKIE_SECURE` | `true`(production) | HTTPS 전용 쿠키 (로컬 개발 시 `false` 로 변경 가능) |
 
-> 운영 환경에서는 반드시 강한 비밀값으로 교체해야 합니다.
+> **운영 환경**: 반드시 강력한 `JWT_SECRET` 과 `ADMIN_PASSWORD` 로 교체 후 실행하세요.  
+> `validateRuntimeConfig()` 가 production 모드에서 미설정/기본값인 경우 에러를 던집니다.
 
-### 3) 로컬 실행
+### 3️⃣ 로컬 실행
 
 ```bash
 npm run dev:server
 npm run dev:web
 ```
 
-### 4) 브라우저 접속
+### 4️⃣ 브라우저 접속
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:3001
+| 서비스 | URL |
+|--------|-----|
+| 프론트엔드 | http://localhost:5173 |
+| 백엔드 | http://localhost:3001 |
 
-## 기본 관리자 계정
-
-개발 환경 기본값:
-
-- 이메일: `admin@dmw.local`
-- 비밀번호: `admin123`
-
-> 프로덕션에서는 설정 파일 또는 환경 변수로 반드시 변경하세요.
-
-## 프로덕션 실행
-
-Linux / macOS:
+### 5️⃣ 에이전트 데모 실행
 
 ```bash
-./start-prod.sh
+npm run demo
 ```
 
-Windows CMD:
+## 🔧 개발 환경 설정
 
-```cmd
-start-prod.cmd
-```
-
-Windows PowerShell:
-
-```powershell
-./start-prod.ps1
-```
-
-## 테스트
-
-아래 명령으로 서버 빌드와 테스트를 실행할 수 있습니다.
+### Docker Compose 로 실행
 
 ```bash
-npm test
+docker-compose up
 ```
 
-현재 검증 상태:
+컨테이너 재시작 후에도 데이터는 `dmw_data` 볼륨으로 영속화됩니다.
 
-- `deviceStatus` 상태 판정 테스트 통과
-- 프로덕션 보안 설정 검증 테스트 통과
-- 전체 Node 테스트 통과
-
-## 운영 환경 설정
-
-프로덕션에서는 최소한 아래 항목을 반드시 설정해야 합니다.
-
-```env
-NODE_ENV=production
-JWT_SECRET=your-strong-random-secret
-ADMIN_EMAIL=admin@dmw.local
-ADMIN_PASSWORD=strong-admin-password
-PORT=3001
-```
-
-선택 항목:
-
-```env
-ALERT_CPU_THRESHOLD=85
-ALERT_MEMORY_THRESHOLD=80
-ALERT_DISK_THRESHOLD=90
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-```
-
-## 프론트엔드 빌드 설정
-
-프론트엔드는 Vite를 사용하여 빌드되며, API 호출 주소는 `VITE_API_BASE` 환경 변수에 의해 결정됩니다. VPN을 통해 접속하는 경우, 브라우저가 로컬 네트워크의 서버에 요청을 보내야 하므로 반드시 `.env` 파일에 실제 서버 IP를 설정해야 합니다.
-
-예:
-
-```env
-VITE_API_BASE=http://192.168.1.100:3001
-VITE_WS_BASE=ws://192.168.1.100:3001
-```
-
-기본값은 `http://localhost:3001`로, 로컬 개발 환경에서만 작동합니다.
-
-```env
-ALERT_CPU_THRESHOLD=85
-ALERT_MEMORY_THRESHOLD=80
-ALERT_DISK_THRESHOLD=90
-DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
-SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...
-```
-
-## API 흐름 개요
-
-### 관리자 로그인
-
-- `POST /auth/login`
-- 이메일/비밀번호 검증
-- JWT access token 발급
-- Refresh token은 HttpOnly 쿠키와 DB hash로 관리
-
-### 디바이스 관리
-
-- `GET /devices`
-- `POST /devices`
-- `PATCH /devices/:id`
-- `DELETE /devices/:id`
-
-### 페어링
-
-- `POST /agent/pair`
-- 일회용 pairing code 검증
-- agent API key 발급
-- device 상태를 `ONLINE`으로 전환
-
-### Heartbeat
-
-- `POST /agent/heartbeat`
-- `Authorization: Bearer <apiKey>` 사용
-- CPU / Memory / Disk 값을 수집
-- metrics latest, history 저장
-- WebSocket 방송
-
-### WOL
-
-- `POST /devices/:id/wake`
-- 대상 장치의 IP, MAC 기반 매직 패킷 전송
-- 성공 시 `WAKE_TIMEOUT` 상태로 전환
-
-## Agent 실행
-
-### Linux / macOS
+### 모니터링 및 경보 환경 변수
 
 ```bash
-cd agent-demo
-node agent.js
+ALERT_CPU_THRESHOLD=85    # CPU 임계치 (초과 시 critical 경보)
+ALERT_MEMORY_THRESHOLD=80 # 메모리 임계치 (초과 시 warning 경보)
+ALERT_DISK_THRESHOLD=90   # 디스크 임계치 (초과 시 warning 경보)
 ```
 
-### Windows
+## 📊 데이터 모델
 
-```powershell
-cd .\agent-demo
-node .\agent-win.js
-```
+| 테이블 | 설명 | 주요 필드 |
+|--------|------|----------|
+| `users` | 관리자 계정 | `email` (UNIQUE), `password_hash` (bcrypt) |
+| `devices` | 관리 대상 기기 | `mac_address`, `ip_address`, `agent_key_hash`, `agent_paired`, `status` |
+| `pairing_codes` | 일회용 페어링 코드 | `code` (16 자 16 진수), `expires_at` (10 분), `used_at` |
+| `device_metrics_latest` | 최신 상태 데이터 | `cpu_usage`, `memory_usage`, `disk_usage` |
+| `device_metrics_history` | 상태 이력 데이터 | `(device_id, updated_at)` UNIQUE |
+| `refresh_tokens` | 리프레시 토큰 | `token_hash` (bcrypt), `lookup_id` (16 자 힌트), `revoked` |
 
-환경 파일 예시:
+## 🛡️ 보안 특징
 
-```env
-SERVER_URL=http://localhost:3001
-PAIRING_CODE=ABCD1234
-HEARTBEAT_INTERVAL_MS=10000
-```
+- **비밀 키 해싱**: 비밀번호 (bcrypt 10 rounds), Refresh Token (bcrypt 10 rounds), API Key (bcrypt 해시 + 12 자 힌트 DB 인덱싱)
+- **JWT 1 일 유효**: Access Token 만료 시 Refresh Token 으로 재발급
+- **HTTPS 전용 쿠키**: production 모드의 `COOKIE_SECURE=true` 로 리프레시 토큰이 평면 HTTP 로 유출되지 않음
+- **Rate Limiting**: 인증/에이전트 라우트 5 분당 최대 10 회 제한
+- **입력 검증**: MAC/IP 형식 검증, 0~100 범위 체크, WOL 브로드캐스트 주소 정규화
+- **오류 정보 누출 방지**: 500 응답 시 내부 에러 메시지 노출 차단
 
-## Docker 실행
+## 📈 향후 계획 (Roadmap)
 
-```bash
-copy server\.env.example server\.env
-docker compose up --build -d
-```
+### P1 (선택 목표)
+- [ ] Windows 등 추가 OS 용 에이전트 공식 지원
+- [ ] 상태 이력 그래프 (7 일 보존 + 자동 삭제)
+- [ ] Discord/Telegram Webhook 연동
+- [ ] SSH 를 통한 원격 명령 실행
 
-접속 주소:
+### P2 (향후)
+- [ ] 다중 사용자/역할 기반 권한 관리
+- [ ] 모바일 앱 (React Native)
+- [ ] Docker Hub 공식 이미지 배포
 
-- Frontend: http://localhost:5173
-- Backend: http://localhost:3001
+## 🤝 기여
 
-## Docker 동작 원리
+이 프로젝트는 개인용으로 개발되었습니다. 이슈나 제안은 환영합니다.
 
-- backend 와 frontend 분리 실행
-- SQLite 파일은 volume으로 유지
-- healthcheck 추가
-- local 및 production 비슷한 환경 구성
+## 📄 라이선스
 
-## 현재 구현 상태
-
-현재 저장소는 MVP 수준으로 다음 기능이 포함되어 있습니다.
-
-- [x] 관리자 인증
-- [x] 장치 CRUD
-- [x] 페어링 흐름
-- [x] heartbeat 메트릭
-- [x] 상태 판정
-- [x] WOL 전원 제어
-- [x] WebSocket 실시간 반영
-- [x] Alert 평가
-- [x] Docker 구성
-- [x] Windows Agent 데모
-- [x] 로컬 테스트 통과
-
-## 참고 사항
-
-- WOL은 네트워크 환경과 대상 장치의 BIOS/NIC 설정에 따라 동작 여부가 달라집니다.
-- 실제 운영 배포 전에는 `JWT_SECRET`, `ADMIN_PASSWORD`, webhook URL, 네트워크 보안 정책을 반드시 재검토해야 합니다.
-- 현재 구현은 개인/소규모 네트워크용 관리 도구로 설계되었으며, 대규모 다중 사용자 운영을 위해서는 사용자 관리와 권한 모델을 추가하는 것이 좋습니다.
+MIT
