@@ -70,3 +70,14 @@ export const normalizeIp = (raw: string): string | null => {
  * @returns 유효하면 true, 아니면 false
  */
 export const isValidIp = (raw: string): boolean => normalizeIp(raw) !== null
+
+/**
+ * Validates a usage value is a number between 0 and 100
+ * @param value - The value to validate
+ * @returns The validated number, or null if invalid
+ */
+export const normalizeUsage = (value: unknown): number | null => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null
+  if (value < 0 || value > 100) return null
+  return value
+}

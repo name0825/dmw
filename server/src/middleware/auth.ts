@@ -1,4 +1,7 @@
-import { AuthError, isValidJwtToken } from './auth.js'
+import { AuthError, isValidJwtToken, isPublicRoute, extractBearerToken } from '../auth.js'
+import { JWT_SECRET } from '../config.js'
+import { getDb } from '../database/index.js'
+import jwt from 'jsonwebtoken'
 
 /**
  * 요청의 Authorization 헤더에서 Bearer 토큰을 추출하고 JWT 검증 후
@@ -22,9 +25,10 @@ export const authMiddleware = async (request: any, reply: any) => {
 
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { email: string }
+    const db = getDb()
     const user = await db.get('SELECT id, email FROM users WHERE email = ?', [decoded.email])
     if (!user) {
-      throw new AuthError('Invalid token', 'USER_NOT_FOUND', 401)
+      throw new AuthError('Invalid token', 'USER_NOT:FOUND', 401)
     }
     request.user = user
   } catch (err) {

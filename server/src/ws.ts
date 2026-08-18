@@ -1,5 +1,6 @@
 import { WebSocketServer } from 'ws'
 import { PORT } from './config.js'
+import { getDb } from './database/index.js'
 
 // ============================================================================
 // WebSocket server setup

@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 
 import { AGENT_PAIR_RATE_LIMIT } from '../config/constants.js'
+import { normalizeUsage } from '../utils/validation.js'
 
 // ============================================================================
 // Route registration (defines Fastify endpoints)
@@ -25,18 +26,8 @@ export const registerAgentRoutes = (app: any) => {
  * @param authHeader - Authorization header value
  * @returns API key string
  */
+// ...existing code...
 export const extractApiKey = (authHeader: string): string => {
   if (!authHeader.startsWith('Bearer ')) return ''
   return authHeader.slice('Bearer '.length)
-}
-
-/**
- * Validates a usage value is a number between 0 and 100
- * @param value - The value to validate
- * @returns The validated number, or null if invalid
- */
-export const normalizeUsage = (value: unknown): number | null => {
-  if (typeof value !== 'number' || !Number.isFinite(value)) return null
-  if (value < 0 || value > 100) return null
-  return value
 }

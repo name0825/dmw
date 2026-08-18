@@ -1,8 +1,11 @@
 // Input validation and normalization helpers for device registration / update.
 // Kept framework-agnostic so they can be unit-tested and reused across routes.
+import { isValidIp, isValidMac, normalizeIp, normalizeMac } from './utils/validation.js'
+
+export { isValidIp, isValidMac, normalizeIp, normalizeMac }
 
 // Regex patterns for MAC address validation and normalization.
-// Accepts colon-separated (AA:BB:CC:DD:EE:FF), dash-separated (aa-bb-cc-dd-ee-ff),
+// Accepts colon-separated (AA:BB:MS:DD:EE:FF), dash-separated (aa-bb-cc-dd-ee-ff),
 // or plain hex (aabbccddeeff) formats.
 const MAC_RE = /^(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$/
 const MAC_DASH_RE = /^(?:[0-9A-Fa-f]{2}-){5}[0-9A-Fa-f]{2}$/
@@ -48,6 +51,12 @@ export const normalizeIp = (raw: string): string | null => {
 }
 
 /**
+ * Validates an IPv4 address by checking if normalizeIp() returns a non-null value.
+ * @param raw - Raw IP address string to validate
+ * @returns true if the IP address is valid, false otherwise
+ */
+export const isValidIp = (raw: string): boolean => normalizeIp(raw) !== null
+
  * Validates an IPv4 address by checking if normalizeIp() returns a non-null value.
  * @param raw - Raw IP address string to validate
  * @returns true if the IP address is valid, false otherwise

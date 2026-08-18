@@ -7,7 +7,7 @@ import rateLimit from '@fastify/rate-limit'
 import { CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware, isPublicRoute } from './middleware/auth.js'
-import { registerRoutes } from './routes/index.js'
+import { registerRoutes } from './routes.js'
 
 const app = Fastify({ logger: false })
 

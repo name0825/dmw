@@ -8,15 +8,13 @@ let pool: any = null
  * SQLite DB 풀을 생성하고 초기화함.
  * 서버 시작 시 한 번만 호출되며, 이후 재사용됨.
  */
-export const initPool = (): any => {
+export const initPool = async (): Promise<any> => {
   if (pool) return pool
 
-  pool = sqlite.open(process.env.DB_PATH || 'data/dmw.db') as any
-
-  pool.addListener('open', async () => {
-    await initDb(pool)
-    await ensureAdmin(pool)
-  })
+  const db = await sqlite.open(process.env.DB_PATH || 'data/dmw.db') as any
+  await initDb(db)
+  await ensureAdmin(db)
+  pool = db
 
   return pool
 }
