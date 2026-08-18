@@ -14,3 +14,4 @@ agent-demo/.env.*
 .DS_Store
 npm-debug.log*
 REFACTOR_LOG.md
+prpt.md

@@ -5,10 +5,9 @@ import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 
 import { CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
-import { ensureAdmin } from './db.js'
-import { authMiddleware, isPublicRoute } from './auth.js'
-import { setupWebSocket } from './ws.js'
-import { registerRoutes } from './routes.js'
+import { initPool, closePool } from './database/index.js'
+import { authMiddleware, isPublicRoute } from './middleware/auth.js'
+import { registerRoutes } from './routes/index.js'
 
 const app = Fastify({ logger: false })
 
@@ -38,9 +37,19 @@ app.addHook('preHandler', async (request: any, reply) => {
 })
 
 validateRuntimeConfig()
-await ensureAdmin()
+
+// DB 풀 초기화 및 admin 계정 생성
+const pool = initPool()
+await pool.then((db: any) => db.run('PRAGMA foreign_keys = ON'))
+
 await registerRoutes(app)
 
 await app.listen({ port: PORT, host: '0.0.0.0' })
 setupWebSocket(app.server)
 console.log(`DMW server listening on http://localhost:${PORT}`)
+
+process.on('beforeExit', () => {
+  console.log('Shutting down...')
+  closePool()
+  app.close()
+})

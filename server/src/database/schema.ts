@@ -1,10 +1,10 @@
 import type { Database } from 'sqlite'
 
 /**
- * Create all tables, indexes and initial bootstrap data on a fresh database.
- * Idempotent — safe to run on every startup.
+ * DB 인스턴스 초기화 및 스키마 생성을 담당함.
+ * 서버 시작 시마다 idempotently 실행되어 추가 테이블 생성 없이 안전함.
  */
-export const createSchema = async (db: Database) => {
+export const initDb = async (db: Database): Promise<void> => {
   await db.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
