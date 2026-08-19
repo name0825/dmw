@@ -1,7 +1,10 @@
 import { getDb } from '../database/index.js'
-import { evaluateAlerts, notifyAlerts } from './alerts.js'
+import { evaluateAlerts, notifyAlerts } from '../alerts.js'
 import { broadcastState } from './ws.js'
-import { evaluateDeviceStatus } from './deviceStatus.js'
+import { evaluateDeviceStatus } from '../deviceStatus.js'
+
+// Store timestamps of last sent alerts to prevent spamming
+const lastAlertTimestamps = new Map<string, number>()
 
 /**
  * 기기 상태 업데이트 및 오프라인 상태 관리.
@@ -43,9 +46,10 @@ export const monitorAlerts = async () => {
   const now = Date.now()
   const filteredAlerts = alerts.filter((alert: any) => {
     const key = `${alert.deviceId}-${alert.metric}`
-    const lastTimestamp = ({} as any).lastAlertTimestamps?.get(key) || 0
+    const lastTimestamp = lastAlertTimestamps.get(key) || 0
     const cooldownPeriod = 5 * 60 * 1000
     if (now - lastTimestamp > cooldownPeriod) {
+      lastAlertTimestamps.set(key, now)
       return true
     }
     return false

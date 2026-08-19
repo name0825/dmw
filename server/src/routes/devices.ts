@@ -1,6 +1,7 @@
 import Fastify from 'fastify'
 
-import { DEVICE_WAKE_RATE_LIMIT } from '../config/constants.js'
+import { DEVICE_WAKE_RATE_LIMIT_MAX } from '../config/constants.js'
+import * as deviceService from '../services/devices.js'
 
 // ============================================================================
 // Route registration (defines Fastify endpoints)
@@ -11,35 +12,35 @@ import { DEVICE_WAKE_RATE_LIMIT } from '../config/constants.js'
  * @param app - Fastify app instance
  */
 export const registerDeviceRoutes = (app: any) => {
-  app.get('/dashboard', async () => {
-    return await handleGetDashboard()
+  app.get('/dashboard', async (request: any, reply: any) => {
+    return await deviceService.handleGetDashboard(request, reply)
   })
 
-  app.get('/devices', async () => {
-    return await handleGetDevices()
+  app.get('/devices', async (request: any, reply: any) => {
+    return await deviceService.handleGetDevices(request, reply)
   })
 
-  app.get('/devices/:id/history', async (request: any) => {
-    return await handleGetDeviceHistory(request)
+  app.get('/devices/:id/history', async (request: any, reply: any) => {
+    return await deviceService.handleGetDeviceHistory(request, reply)
   })
 
-  app.get('/alerts', async () => {
-    return await handleGetAlerts()
+  app.get('/alerts', async (request: any, reply: any) => {
+    return await deviceService.handleGetAlerts(request, reply)
   })
 
   app.post('/devices', async (request: any, reply: any) => {
-    return await handleCreateDevice(request, reply)
+    return await deviceService.handleCreateDevice(request, reply)
   })
 
   app.patch('/devices/:id', async (request: any, reply: any) => {
-    return await handleUpdateDevice(request, reply)
+    return await deviceService.handleUpdateDevice(request, reply)
   })
 
   app.delete('/devices/:id', async (request: any, reply: any) => {
-    return await handleDeleteDevice(request, reply)
+    return await deviceService.handleDeleteDevice(request, reply)
   })
 
-  app.post('/devices/:id/wake', { config: { rateLimit: DEVICE_WAKE_RATE_LIMIT } }, async (request: any, reply: any) => {
-    return await handleWakeDevice(request, reply)
+  app.post('/devices/:id/wake', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: '1 minute' } } }, async (request: any, reply: any) => {
+    return await deviceService.handleWakeDevice(request, reply)
   })
 }

@@ -6,8 +6,10 @@ import rateLimit from '@fastify/rate-limit'
 
 import { CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { initPool, closePool } from './database/index.js'
-import { authMiddleware, isPublicRoute } from './middleware/auth.js'
+import { authMiddleware } from './middleware/auth.js'
+import { isPublicRoute } from './auth.js'
 import { registerRoutes } from './routes.js'
+import { setupWebSocket } from './services/ws.js'
 
 const app = Fastify({ logger: false })
 
@@ -39,8 +41,8 @@ app.addHook('preHandler', async (request: any, reply) => {
 validateRuntimeConfig()
 
 // DB 풀 초기화 및 admin 계정 생성
-const pool = initPool()
-await pool.then((db: any) => db.run('PRAGMA foreign_keys = ON'))
+const pool = await initPool()
+await pool.run('PRAGMA foreign_keys = ON')
 
 await registerRoutes(app)
 

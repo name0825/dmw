@@ -1,4 +1,4 @@
-import sqlite from 'sqlite'
+import * as sqlite from 'sqlite'
 import { initDb } from './schema.js'
 import { ensureAdmin } from './auth.js'
 
@@ -11,7 +11,10 @@ let pool: any = null
 export const initPool = async (): Promise<any> => {
   if (pool) return pool
 
-  const db = await sqlite.open(process.env.DB_PATH || 'data/dmw.db') as any
+  const db = await sqlite.open({
+    filename: process.env.DB_PATH || 'data/dmw.db',
+    driver: 'sqlite3'
+  }) as any
   await initDb(db)
   await ensureAdmin(db)
   pool = db

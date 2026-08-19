@@ -1,6 +1,6 @@
 import Fastify from 'fastify'
 
-import { AUTH_RATE_LIMIT, REFRESH_RATE_LIMIT } from '../config/constants.js'
+import { AUTH_RATE_LIMIT_MAX, REFRESH_RATE_LIMIT_MAX } from '../config/constants.js'
 
 // ============================================================================
 // Route registration (defines Fastify endpoints)
@@ -11,11 +11,11 @@ import { AUTH_RATE_LIMIT, REFRESH_RATE_LIMIT } from '../config/constants.js'
  * @param app - Fastify app instance
  */
 export const registerAuthRoutes = (app: any) => {
-  app.post('/auth/login', { config: { rateLimit: AUTH_RATE_LIMIT } }, async (request: any, reply: any) => {
+  app.post('/auth/login', { config: { rateLimit: { max: AUTH_RATE_LIMIT_MAX } } }, async (request: any, reply: any) => {
     return await handleLogin(request, reply)
   })
 
-  app.post('/auth/refresh', { config: { rateLimit: REFRESH_RATE_LIMIT } }, async (request: any, reply: any) => {
+  app.post('/auth/refresh', { config: { rateLimit: { max: REFRESH_RATE_LIMIT_MAX } } }, async (request: any, reply: any) => {
     return await handleRefresh(request, reply)
   })
 
@@ -31,13 +31,13 @@ export const registerAuthRoutes = (app: any) => {
 import bcrypt from 'bcryptjs'
 import { ADMIN_EMAIL } from '../config.js'
 import { getDb } from '../database/index.js'
-import { createToken } from '../middleware/auth.js'
+import { createToken } from '../auth.js'
 import {
   issueRefreshToken,
   extractRefreshToken,
   findRefreshTokenMatch,
   revokeRefreshToken,
-} from '../services/auth.js'
+} from '../database/auth.js'
 
 /**
  * Login request handler
@@ -121,7 +121,11 @@ export const handleLogout = async (_request: any, reply: any) => {
   const refreshToken = extractRefreshToken(_request)
 
   if (refreshToken) {
-    await revokeRefreshToken(refreshToken)
+    const matched = await findRefreshTokenMatch(refreshToken)
+    if (matched) {
+      await revokeRefreshToken(matched.id)
+    }
+
   }
 
   reply.clearCookie('refreshToken')
