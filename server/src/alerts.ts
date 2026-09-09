@@ -1,3 +1,9 @@
+import {
+  DEFAULT_ALERT_CPU_THRESHOLD,
+  DEFAULT_ALERT_MEMORY_THRESHOLD,
+  DEFAULT_ALERT_DISK_THRESHOLD,
+} from './config/constants.js'
+
 export type AlertLevel = 'info' | 'warning' | 'critical'
 
 export type DeviceAlert = {
@@ -17,9 +23,9 @@ const getThreshold = (key: string, fallback: number) => {
 export function evaluateAlerts(device: any): DeviceAlert[] {
   const alerts: DeviceAlert[] = []
   const now = new Date().toISOString()
-  const cpuThreshold = getThreshold('ALERT_CPU_THRESHOLD', 85)
-  const memoryThreshold = getThreshold('ALERT_MEMORY_THRESHOLD', 80)
-  const diskThreshold = getThreshold('ALERT_DISK_THRESHOLD', 90)
+  const cpuThreshold = getThreshold('ALERT_CPU_THRESHOLD', DEFAULT_ALERT_CPU_THRESHOLD)
+  const memoryThreshold = getThreshold('ALERT_MEMORY_THRESHOLD', DEFAULT_ALERT_MEMORY_THRESHOLD)
+  const diskThreshold = getThreshold('ALERT_DISK_THRESHOLD', DEFAULT_ALERT_DISK_THRESHOLD)
 
   if (device.cpu_usage !== null && device.cpu_usage !== undefined && device.cpu_usage > cpuThreshold) {
     alerts.push({
@@ -55,38 +61,4 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
   }
 
   return alerts
-}
-
-export async function notifyAlerts(alerts: DeviceAlert[]) {
-  if (!alerts.length) return
-
-  const discordWebhook = process.env.DISCORD_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL
-  if (!discordWebhook) return
-
-  const message = alerts
-    .map((alert) => `${alert.metric.toUpperCase()} ${alert.value}% · ${alert.message}`)
-    .join('\n')
-
-  try {
-    const payload = discordWebhook.includes('discord')
-      ? {
-          username: 'DMW Alert',
-          embeds: [{
-            title: 'Device monitoring alert',
-            description: message,
-            color: 15158332,
-          }],
-        }
-      : {
-          text: `DMW Alert\n${message}`,
-        }
-
-    await fetch(discordWebhook, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-  } catch {
-    // webhook failures should not break the main monitoring flow
-  }
 }

@@ -1,0 +1,24 @@
+name: Agent release
+
+on:
+  push:
+    tags:
+      - 'agent-v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node --test agent/test/*.test.js
+      - run: node agent/scripts/build-release.js
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" agent/release/*.json agent/release/*.sha256 --verify-tag --generate-notes --latest

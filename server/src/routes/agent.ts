@@ -1,5 +1,3 @@
-import Fastify from 'fastify'
-
 import { AGENT_PAIR_RATE_LIMIT_MAX } from '../config/constants.js'
 import * as agentService from '../services/agent.js'
 
@@ -18,5 +16,9 @@ export const registerAgentRoutes = (app: any) => {
 
   app.post('/agent/heartbeat', async (request: any, reply: any) => {
     return await agentService.handleHeartbeat(request, reply)
+  })
+
+  app.post('/agent/unpair', async (request: any, reply: any) => {
+    return await agentService.handleUnpair(request, reply)
   })
 }

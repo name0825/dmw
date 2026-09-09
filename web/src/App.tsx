@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 
-import { getApiBaseUrl, getWebSocketBaseUrl, mapHistory, normalizeAlerts, normalizeDevices, requestJson } from './api'
-import { DEFAULT_AGENT_STATE, IPV4_RE, MAC_RE } from './constants'
-import type { AgentState, AlertItem, Device, DeviceForm, DeviceHistoryEntry } from './types'
+import { authorizedRequest, getApiBaseUrl, getWebSocketBaseUrl, mapHistory, normalizeAlerts, normalizeDevices, requestJson } from './api'
+import { IPV4_RE, MAC_RE } from './constants'
+import type { AlertItem, Device, DeviceForm, DeviceHistoryEntry, PairingInfo } from './types'
 
 /**
  * Validate a MAC address in canonical `AA:BB:CC:DD:EE:FF` form.
@@ -19,8 +19,17 @@ const isValidMac = (value: string) => MAC_RE.test(value.trim())
 const isValidIp = (value: string) => IPV4_RE.test(value.trim())
 
 /**
+ * Outcome of a session refresh attempt, distinguishing an auth failure
+ * (refresh token invalid/expired) from a network error (server unreachable).
+ */
+type RefreshResult =
+  | { status: 'ok'; token: string }
+  | { status: 'auth-failed' }
+  | { status: 'network-error' }
+
+/**
  * Main dashboard view for the DMW frontend.
- * The component coordinates auth state, device management, and agent demo flows while keeping UI logic compact.
+ * The component coordinates auth state, device management, and pairing code issuance while keeping UI logic compact.
  */
 export default function App() {
   const [devices, setDevices] = useState<Device[]>([])
@@ -29,13 +38,66 @@ export default function App() {
   const [editingId, setEditingId] = useState<number | null>(null)
   const [token, setToken] = useState('')
   const [message, setMessage] = useState('')
-  const [createdDevice, setCreatedDevice] = useState<{ pairingCode?: string; deviceId?: number; expiresAt?: string } | null>(null)
+  const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [historyByDevice, setHistoryByDevice] = useState<Record<number, DeviceHistoryEntry[]>>({})
   const [alerts, setAlerts] = useState<AlertItem[]>([])
-  const [agentState, setAgentState] = useState<AgentState>(DEFAULT_AGENT_STATE)
 
   const apiBase = getApiBaseUrl()
   const wsBase = getWebSocketBaseUrl()
+
+  /**
+   * Clear local session state without contacting the server.
+   */
+  const clearSession = () => {
+    setToken('')
+    setDevices([])
+    setAlerts([])
+    setHistoryByDevice({})
+    setPairingInfo(null)
+    setEditingId(null)
+  }
+
+  /**
+   * Restore the session using the refresh-token cookie when present.
+   * Distinguishes an auth failure (401/403 from the refresh endpoint) from a
+   * network error (fetch itself throws), since only the former should log the user out.
+   * @returns {Promise<RefreshResult>} The outcome of the refresh attempt.
+   */
+  const refreshSession = async (): Promise<RefreshResult> => {
+    let res: Response
+    let data: any
+
+    try {
+      ;({ res, data } = await requestJson(`${apiBase}/auth/refresh`, {
+        method: 'POST',
+        credentials: 'include',
+      }))
+    } catch {
+      return { status: 'network-error' }
+    }
+
+    if (res.status === 401 || res.status === 403) return { status: 'auth-failed' }
+
+    if (res.ok && data?.accessToken) {
+      setToken(data.accessToken)
+      return { status: 'ok', token: data.accessToken }
+    }
+
+    return { status: 'network-error' }
+  }
+
+  /**
+   * Perform a fetch with the current access token, transparently refreshing
+   * the session and retrying once when the server responds with 401.
+   */
+  const authedRequest = (url: string, init: RequestInit = {}) => (
+    authorizedRequest(url, init, token, async () => {
+      const result = await refreshSession()
+      if (result.status === 'ok') return result.token
+      if (result.status === 'auth-failed') clearSession()
+      return null
+    })
+  )
 
   /**
    * Load device metadata and alert summaries for the current user.
@@ -43,9 +105,7 @@ export default function App() {
   const loadDevices = async () => {
     if (!token) return
 
-    const { res, data } = await requestJson(`${apiBase}/devices`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const { res, data } = await authedRequest(`${apiBase}/devices`)
 
     if (!res.ok) {
       setMessage('디바이스 목록을 불러오지 못했습니다.')
@@ -54,30 +114,10 @@ export default function App() {
 
     setDevices(normalizeDevices(data?.devices ?? []))
 
-    const alertResult = await requestJson(`${apiBase}/alerts`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const alertResult = await authedRequest(`${apiBase}/alerts`)
 
     if (alertResult.res.ok) {
       setAlerts(normalizeAlerts(alertResult.data?.alerts ?? []))
-    }
-  }
-
-  /**
-   * Restore the session using the refresh-token cookie when present.
-   */
-  const refreshSession = async () => {
-    try {
-      const { res, data } = await requestJson(`${apiBase}/auth/refresh`, {
-        method: 'POST',
-        credentials: 'include',
-      })
-
-      if (res.ok && data?.accessToken) {
-        setToken(data.accessToken)
-      }
-    } catch {
-      // Network error or server unreachable — stay logged out.
     }
   }
 
@@ -96,10 +136,36 @@ export default function App() {
 
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
+    let cancelled = false
+    let attempt = 0
+    let quickFailCount = 0
+    let connectStartedAt = 0
+
+    const BASE_BACKOFF_MS = 1500
+    const MAX_BACKOFF_MS = 30000
+    // 연결 시도 직후(1초 이내) 닫히는 패턴이 반복되면 핸드셰이크 인증 실패(401)로 간주한다.
+    const QUICK_FAIL_MS = 1000
+
+    const backoffDelay = () => {
+      const cap = Math.min(BASE_BACKOFF_MS * 2 ** attempt, MAX_BACKOFF_MS)
+      return cap / 2 + Math.random() * (cap / 2)
+    }
+
+    const scheduleReconnect = () => {
+      const delay = backoffDelay()
+      attempt += 1
+      reconnectTimer = window.setTimeout(connect, delay)
+    }
 
     const connect = () => {
+      connectStartedAt = Date.now()
       // 토큰을 서브프로토콜로 전달해 URL/히스토리/프록시 로그 노출을 차단한다.
       socket = new WebSocket(wsBase, [token])
+
+      socket.onopen = () => {
+        attempt = 0
+        quickFailCount = 0
+      }
 
       socket.onmessage = (event) => {
         try {
@@ -112,14 +178,38 @@ export default function App() {
         }
       }
 
-      socket.onclose = () => {
-        if (reconnectTimer) window.clearTimeout(reconnectTimer)
-        reconnectTimer = window.setTimeout(connect, 1500)
+      socket.onclose = async () => {
+        if (cancelled) return
+
+        quickFailCount = Date.now() - connectStartedAt < QUICK_FAIL_MS ? quickFailCount + 1 : 0
+
+        if (quickFailCount >= 2) {
+          const result = await refreshSession()
+          if (cancelled) return
+
+          if (result.status === 'auth-failed') {
+            await logoutUser()
+            // token 상태 변화(로그아웃)가 이 effect 를 재실행시키므로 여기서는 재연결을 예약하지 않는다.
+            return
+          }
+
+          if (result.status === 'network-error') {
+            // 토큰과 무관한 장애이므로 세션을 유지하고 백오프로 계속 재시도한다.
+            scheduleReconnect()
+            return
+          }
+
+          // token 상태 변화(갱신)가 이 effect 를 재실행시키므로 여기서는 재연결을 예약하지 않는다.
+          return
+        }
+
+        scheduleReconnect()
       }
     }
 
     connect()
     return () => {
+      cancelled = true
       if (socket) socket.close()
       if (reconnectTimer) window.clearTimeout(reconnectTimer)
     }
@@ -158,17 +248,46 @@ export default function App() {
       // Even if the request fails, clear the local session below.
     }
 
-    setToken('')
-    setDevices([])
-    setAlerts([])
-    setHistoryByDevice({})
-    setCreatedDevice(null)
-    setEditingId(null)
+    clearSession()
     setMessage('로그아웃되었습니다.')
   }
 
   /**
-   * Persist a new device and issue a pairing code.
+   * Issue a pairing code that is not yet bound to any device.
+   */
+  const generatePairingCode = async () => {
+    if (!token) {
+      setMessage('먼저 로그인해야 합니다.')
+      return
+    }
+
+    const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, { method: 'POST' })
+
+    if (!res.ok) {
+      setMessage(data?.message || '페어링 코드 발급 실패')
+      return
+    }
+
+    setPairingInfo({ code: data.code, expiresAt: data.expiresAt })
+    setMessage('페어링 코드가 발급되었습니다.')
+  }
+
+  /**
+   * Copy the currently issued pairing code to the clipboard.
+   */
+  const copyPairingCode = async () => {
+    if (!pairingInfo) return
+
+    try {
+      await navigator.clipboard.writeText(pairingInfo.code)
+      setMessage('페어링 코드를 클립보드에 복사했습니다.')
+    } catch {
+      setMessage('클립보드 복사에 실패했습니다. 코드를 직접 입력해 주세요.')
+    }
+  }
+
+  /**
+   * Persist a new device record for WOL-only management.
    */
   const saveDevice = async () => {
     if (!token) {
@@ -192,12 +311,9 @@ export default function App() {
     const method = editingId !== null ? 'PATCH' : 'POST'
     const endpoint = editingId !== null ? `${apiBase}/devices/${editingId}` : `${apiBase}/devices`
 
-    const { res, data } = await requestJson(endpoint, {
+    const { res, data } = await authedRequest(endpoint, {
       method,
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(form),
     })
 
@@ -209,11 +325,6 @@ export default function App() {
     setMessage(editingId !== null ? '디바이스 수정 완료' : '디바이스 등록 완료')
     setForm({ name: '', mac_address: '', ip_address: '' })
     setEditingId(null)
-    if (method === 'POST') {
-      setCreatedDevice(data)
-    } else {
-      setCreatedDevice(null)
-    }
     await loadDevices()
   }
 
@@ -222,10 +333,7 @@ export default function App() {
    * @param {number} id - Device identifier.
    */
   const deleteDevice = async (id: number) => {
-    const { res, data } = await requestJson(`${apiBase}/devices/${id}`, {
-      method: 'DELETE',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const { res, data } = await authedRequest(`${apiBase}/devices/${id}`, { method: 'DELETE' })
 
     if (res.ok) {
       setMessage(data?.message || '디바이스 삭제 완료')
@@ -251,10 +359,7 @@ export default function App() {
    * @param {number} id - Device identifier.
    */
   const wakeDevice = async (id: number) => {
-    const { res, data } = await requestJson(`${apiBase}/devices/${id}/wake`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const { res, data } = await authedRequest(`${apiBase}/devices/${id}/wake`, { method: 'POST' })
 
     setMessage(data?.message || 'Wake 요청 전송')
     if (res.ok) {
@@ -267,9 +372,7 @@ export default function App() {
    * @param {number} deviceId - Device identifier.
    */
   const loadHistory = async (deviceId: number) => {
-    const { res, data } = await requestJson(`${apiBase}/devices/${deviceId}/history`, {
-      headers: { Authorization: `Bearer ${token}` },
-    })
+    const { res, data } = await authedRequest(`${apiBase}/devices/${deviceId}/history`)
 
     if (!res.ok) {
       setMessage('히스토리를 불러오지 못했습니다.')
@@ -277,66 +380,6 @@ export default function App() {
     }
 
     setHistoryByDevice((prev) => mapHistory(prev, deviceId, data?.history ?? []))
-  }
-
-  /**
-   * Pair a demo agent by exchanging its pairing code for an API key.
-   */
-  const pairAgent = async () => {
-    const pairingCode = agentState.pairingCode || createdDevice?.pairingCode || ''
-    if (!pairingCode) {
-      setMessage('페어링 코드를 입력하거나 생성된 코드를 사용하세요.')
-      return
-    }
-
-    const { res, data } = await requestJson(`${agentState.serverUrl}/agent/pair`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ip: '127.0.0.1', pairingCode }),
-    })
-
-    if (!res.ok) {
-      setMessage(data?.message || '페어링 실패')
-      return
-    }
-
-    setAgentState((prev) => ({ ...prev, apiKey: data.apiKey, deviceId: data.deviceId }))
-    setMessage(`에이전트 페어링 성공. API Key 발급 완료: ${data.apiKey.slice(0, 10)}...`)
-    await loadDevices()
-  }
-
-  /**
-   * Simulate a heartbeat from the paired agent using the issued API key.
-   */
-  const sendHeartbeat = async () => {
-    if (!agentState.apiKey) {
-      setMessage('먼저 에이전트를 페어링해 주세요.')
-      return
-    }
-
-    const payload = {
-      cpuUsage: 31.5,
-      memoryUsage: 44.2,
-      diskUsage: 58.1,
-      deviceId: agentState.deviceId,
-    }
-
-    const { res, data } = await requestJson(`${agentState.serverUrl}/agent/heartbeat`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${agentState.apiKey}`,
-      },
-      body: JSON.stringify(payload),
-    })
-
-    if (!res.ok) {
-      setMessage(data?.message || 'heartbeat 전송 실패')
-      return
-    }
-
-    setMessage('heartbeat 전송 성공. 상태가 최신화되었습니다.')
-    await loadDevices()
   }
 
   const summary = {
@@ -443,8 +486,28 @@ export default function App() {
             </section>
           )}
 
+          <section className="card pairing-card">
+            <h2>에이전트 페어링 코드 발급</h2>
+            <p>에이전트를 설치할 PC 의 DMW 에이전트 프로그램에 서버 주소와 아래 코드를 입력하면, 검증 성공 시 해당 PC 가 자동으로 디바이스 목록에 등록됩니다.</p>
+            <div className="action-row">
+              <button onClick={generatePairingCode}>페어링 코드 생성</button>
+            </div>
+            {pairingInfo && (
+              <div className="pairing-box">
+                <strong>발급된 페어링 코드</strong>
+                <div className="pairing-code">{pairingInfo.code}</div>
+                <small>유효시간: {new Date(pairingInfo.expiresAt).toLocaleString()}</small>
+                <small>서버 주소: {apiBase}</small>
+                <div className="action-row">
+                  <button className="secondary" onClick={copyPairingCode}>코드 복사</button>
+                </div>
+              </div>
+            )}
+          </section>
+
           <section className="card form-card">
-            <h2>{editingId !== null ? '디바이스 수정' : '새 디바이스 등록'}</h2>
+            <h2>{editingId !== null ? '디바이스 수정' : '수동 디바이스 등록 (WOL 전용)'}</h2>
+            <p>에이전트를 연결하지 않고 Wake-on-LAN 만 사용할 디바이스는 이름·MAC·IP 를 직접 입력해 등록하세요.</p>
             <div className="form-grid">
               <label>
                 이름
@@ -468,37 +531,6 @@ export default function App() {
                 }}>취소</button>
               )}
             </div>
-            {createdDevice && (
-              <div className="pairing-box">
-                <strong>발급된 페어링 코드</strong>
-                <div className="pairing-code">{createdDevice.pairingCode}</div>
-                <small>유효시간: {createdDevice.expiresAt ? new Date(createdDevice.expiresAt).toLocaleString() : '10분'}</small>
-              </div>
-            )}
-          </section>
-
-          <section className="card agent-card">
-            <h2>Agent 연결 데모</h2>
-            <div className="form-grid">
-              <label>
-                서버 URL
-                <input value={agentState.serverUrl} onChange={(e) => setAgentState({ ...agentState, serverUrl: e.target.value })} />
-              </label>
-              <label>
-                페어링 코드
-                <input value={agentState.pairingCode || createdDevice?.pairingCode || ''} onChange={(e) => setAgentState({ ...agentState, pairingCode: e.target.value })} />
-              </label>
-            </div>
-            <div className="action-row">
-              <button onClick={pairAgent}>에이전트 페어링</button>
-              <button className="secondary" onClick={sendHeartbeat}>heartbeat 전송</button>
-            </div>
-            {agentState.apiKey && (
-              <div className="api-box">
-                <span>API Key</span>
-                <strong>{agentState.apiKey}</strong>
-              </div>
-            )}
           </section>
 
           <section className="card status-panel">

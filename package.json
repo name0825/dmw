@@ -4,14 +4,15 @@
   "version": "1.0.0",
   "workspaces": [
     "server",
-    "web"
+    "web",
+    "agent"
   ],
   "scripts": {
     "dev:server": "npm --workspace server run dev",
     "dev:web": "npm --workspace web run dev",
     "build": "npm --workspace server run build && npm --workspace web run build",
     "start": "npm --workspace server run start",
-    "demo": "node agent-demo/demo-flow.js",
-    "test": "npm --workspace server run build && node --test server/dist/**/*.test.js"
+    "agent": "node agent/src/index.js",
+    "test": "npm --workspace server run build && node --test server/dist/**/*.test.js && node --test agent/test/*.test.js"
   }
 }

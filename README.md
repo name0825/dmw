@@ -20,9 +20,12 @@ DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LA
 - **bcrypt 해싱**: 비밀번호 평문 저장 방지
 
 ### 디바이스 관리
-- **CRUD 연동**: 등록 / 수정 / 삭제
-- **일회용 페어링 코드**: 10 분 자동 만료
-- **에이전트 페어링**: 서버 IP + 페어링 코드 기반 등록
+- **CRUD 연동**: 등록 / 수정 / 삭제 (에이전트 없이 WOL 만 쓰는 기기도 수동 등록 가능, 중복 MAC 은 거부)
+- **일회용 페어링 코드**: 기기와 무관하게 발급, 10 분 자동 만료
+- **에이전트 페어링**: 에이전트가 서버 주소 + 페어링 코드로 접속해 자신의 MAC/IP 를 직접 보고하면, 그 시점에 서버가 기기를 생성(또는 같은 MAC 의 기존 기기를 갱신). 코드 발급만으로 장치가 등록되지는 않음
+- **에이전트 연결 관리**: `--unpair`로 현재 서버와의 페어링을 해제하고, `--repair --server ... --code ...`로 다른 서버에 연결 가능
+- **로그인 자동 실행**: 첫 성공 페어링 뒤 사용자 로그인 시 에이전트를 다시 실행하도록 OS별 시작 항목을 등록
+- **GitHub 자동 업데이트**: 시작 시와 6시간마다 `name0825/dmw` 최신 안정 릴리스를 SHA256 검증 후 확인
 - **API Key 인증**: 에이전트 간 통신 보안 (bcrypt 기반 키 힌트 최적화)
 
 ### 상태 모니터링
@@ -31,15 +34,17 @@ DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LA
   - ONLINE: 마지막 heartbeat 10 초 이내
   - OFFLINE: 30 초 이상 heartbeat 미보내
   - WAKE_TIMEOUT: WOL 후 3 분 이내 상태 변경 없음
-- **CPU / 메모리 / 디스크 사용량**: 10 초 간격 수집
-- **WebSocket 실시간 전달**: 클라이언트 자동 업데이트
+- **CPU / 메모리 / 디스크 사용량**: 10 초 간격 수집, 7 일간 이력 보존
+- **WebSocket 실시간 전달**: JWT 인증(서브프로토콜로 액세스 토큰 전달) 후 클라이언트 자동 업데이트 (`PORT + 1` 에서 리슨)
+- **WOL 브로드캐스트 주소 지정**: `WOL_BROADCAST_ADDRESS` 미설정 시 대상 IP 의 /24 로 유도
 
 ### 알림 시스템
-- **임계치 기반 경보**: 환경 변수로 커스터마이징 가능
+- **임계치 기반 경보**: 환경 변수로 커스터마이징 가능, `alerts` 테이블에 이력 저장
   - CPU: 85% 초과 → critical
   - 메모리: 80% 초과 → warning
   - 디스크: 90% 초과 → warning
 - **5 분 쿨다운**: 스팸 알림 방지
+- **Discord/Slack 웹훅**: 선택 사항 (미설정이어도 DB 기록은 남음)
 
 ## 📦 기술적 특징
 
@@ -59,19 +64,33 @@ DMW/
 │   │   ├── alerts.ts           # 임계치 기반 경보 평가
 │   │   ├── auth.ts             # JWT 토큰 발급/검증, 공개 라우트 정의
 │   │   ├── config.ts           # 환경 변수 로드, 런타임 보안 검증
-│   │   ├── db.ts               # SQLite 연결 + bootstrap 헬퍼
 │   │   ├── deviceStatus.ts     # ONLINE/OFFLINE/WAKE_TIMEOUT 상태 판정
 │   │   ├── index.ts            # 앱 초기화 (라우트 등록 + 스케줄러)
-│   │   ├── monitoring.ts       # 상태 업데이트 + 경보 모니터링 스케줄러
-│   │   ├── validation.ts       # MAC/IP 입력 정규화 유효성 검사
-│   │   ├── ws.ts               # WebSocket 클라이언트 관리 + 브로드캐스트
+│   │   ├── routes.ts           # 라우트 등록 취합
+│   │   ├── config/
+│   │   │   └── constants.ts   # 포트/TTL/rate limit 등 상수
+│   │   ├── database/
+│   │   │   ├── index.ts       # Barrel module (db + ensureAdmin)
+│   │   │   ├── auth.ts        # 인증 관련 DB 헬퍼
+│   │   │   └── schema.ts      # 7 테이블 생성 (users, devices, pairing_codes, device_metrics_latest, device_metrics_history, refresh_tokens, alerts)
+│   │   ├── middleware/
+│   │   │   └── auth.ts        # 요청 인증 미들웨어
 │   │   ├── routes/             # 도메인별 라우트
 │   │   │   ├── auth.ts        # /auth/login/refresh/logout
 │   │   │   ├── devices.ts     # /dashboard/devices/wake/alerts
-│   │   │   └── agent.ts       # /agent/pair/heartbeat
-│   │   ├── db/
-│   │   │   ├── index.ts       # Barrel module (db + ensureAdmin)
-│   │   │   └── schema.ts      # 6 테이블 생성 (users, devices, pairing_codes, metrics, refresh_tokens, alerts)
+│   │   │   ├── agent.ts       # /agent/pair/heartbeat
+│   │   │   └── pairing.ts     # /pairing-codes (관리자 인증 필요)
+│   │   ├── services/           # 도메인별 비즈니스 로직
+│   │   │   ├── agent.ts       # 에이전트 페어링/heartbeat 처리
+│   │   │   ├── devices.ts     # 기기 CRUD
+│   │   │   ├── monitoring.ts  # 상태 업데이트 + 경보 모니터링 스케줄러
+│   │   │   ├── notifications.ts # Discord/Slack 웹훅 발송
+│   │   │   ├── pairing.ts     # 페어링 코드 발급
+│   │   │   ├── wake.ts        # WOL 매직 패킷 전송
+│   │   │   └── ws.ts          # WebSocket 클라이언트 관리 + 브로드캐스트
+│   │   ├── utils/
+│   │   │   ├── crypto.ts      # API Key 생성
+│   │   │   └── validation.ts  # MAC/IP 입력 정규화 유효성 검사
 │   │   └── *.test.ts           # Unit 테스트
 │   ├── Dockerfile
 │   ├── package.json
@@ -83,16 +102,27 @@ DMW/
 │   │   ├── constants.ts        # 상수 정의
 │   │   ├── main.tsx            # 앱 진입점
 │   │   ├── styles.css          # 스타일
-│   │   └── types.ts            # TypeScript 타입
+│   │   ├── types.ts            # TypeScript 타입
+│   │   └── vite-env.d.ts       # Vite 환경 타입 선언
 │   ├── Dockerfile
 │   ├── nginx.conf              # 프론트엔드 역프록시 설정
 │   ├── vite.config.ts
 │   ├── package.json
 │   └── tsconfig.json
-├── agent-demo/                 # 에이전트 데모 (실제 에이전트는 OS 별 별도 프로젝트)
-│   ├── agent.js                # Linux/macOS 에이전트
-│   ├── agent-win.js            # Windows 에이전트
-│   └── demo-flow.js            # 서버 + 에이전트 연동 데모
+├── agent/                      # 런타임 의존성 없는 Node ESM 에이전트 CLI (자세한 사용법은 agent/README.md)
+│   ├── src/
+│   │   ├── index.js            # 진입점 (CLI 인자 파싱, 페어링/heartbeat 루프)
+│   │   ├── client.js           # 서버 API 호출
+│   │   ├── config.js           # 인자/환경 변수 설정 로드
+│   │   ├── credentials.js      # 자격 증명 캐시 (agent/data/)
+│   │   ├── autostart.js        # OS별 사용자 로그인 자동 실행
+│   │   ├── http.js             # HTTP 요청 헬퍼
+│   │   ├── network.js          # MAC/IP 조회
+│   │   ├── retry.js            # 재시도 로직
+│   │   └── update.js            # GitHub 릴리스 업데이트 및 SHA256 검증
+│   ├── scripts/build-release.js # 릴리스 JSON/SHA256 생성
+│   ├── package.json
+│   └── README.md
 ├── docker-compose.yml          # 서버 + 프론트엔드 컨테이너 오케스트레이션
 ├── start.sh                   # 통합 스타트업 스크립트 (Linux/macOS): start.sh [dev|prod|agent]
 ├── start.ps1                  # 통합 스타트업 스크립트 (Windows PowerShell): .\start.ps1 [dev|prod|agent]
@@ -145,11 +175,17 @@ npm run dev:web
 | 프론트엔드 | http://localhost:5173 |
 | 백엔드 | http://localhost:3001 |
 
-### 5️⃣ 에이전트 데모 실행
+### 5️⃣ 에이전트 실행
+
+웹의 대시보드에서 페어링 코드를 발급한 뒤, 관리 대상 PC 에서 에이전트를 실행합니다.
 
 ```bash
-npm run demo
+npm run agent
 ```
+
+인자·환경 변수 등 상세 사용법은 [`agent/README.md`](./agent/README.md) 를 참고하세요.
+
+에이전트 릴리스는 `agent/package.json`의 버전을 `X.Y.Z`로 올리고 같은 버전의 `agent-vX.Y.Z` 태그를 GitHub에 push하면 `.github/workflows/agent-release.yml`이 에이전트 테스트를 실행하고 JSON 및 SHA256 자산을 생성해 GitHub Release에 게시합니다. 로컬에서 전체 테스트는 `npm test`, 에이전트만은 `node --test agent/test/*.test.js`로 실행합니다.
 
 ## 🔧 개발 환경 설정
 
@@ -173,19 +209,20 @@ ALERT_DISK_THRESHOLD=90   # 디스크 임계치 (초과 시 warning 경보)
 
 | 테이블 | 설명 | 주요 필드 |
 |--------|------|----------|
-| `users` | 관리자 계정 | `email` (UNIQUE), `password_hash` (bcrypt) |
+| `users` | 관리자 계정 | `email` (UNIQUE), `password_hash` (bcrypt), `role` |
 | `devices` | 관리 대상 기기 | `mac_address`, `ip_address`, `agent_key_hash`, `agent_paired`, `status` |
-| `pairing_codes` | 일회용 페어링 코드 | `code` (16 자 16 진수), `expires_at` (10 분), `used_at` |
+| `pairing_codes` | 일회용 페어링 코드 (기기와 무관하게 발급) | `code` (8 자 16 진수), `expires_at` (10 분), `used_at`, `device_id` (nullable, 소진 시 기록되는 감사 필드) |
 | `device_metrics_latest` | 최신 상태 데이터 | `cpu_usage`, `memory_usage`, `disk_usage` |
-| `device_metrics_history` | 상태 이력 데이터 | `(device_id, updated_at)` UNIQUE |
+| `device_metrics_history` | 상태 이력 데이터 (heartbeat 마다 기록, 7 일 보존) | `device_id`, `timestamp`, `cpu_usage`, `memory_usage`, `disk_usage` |
 | `refresh_tokens` | 리프레시 토큰 | `token_hash` (bcrypt), `lookup_id` (16 자 힌트), `revoked` |
+| `alerts` | 임계치 초과 경보 이력 | `device_id`, `level`, `metric`, `value`, `message` |
 
 ## 🛡️ 보안 특징
 
 - **비밀 키 해싱**: 비밀번호 (bcrypt 10 rounds), Refresh Token (bcrypt 10 rounds), API Key (bcrypt 해시 + 12 자 힌트 DB 인덱싱)
 - **JWT 1 일 유효**: Access Token 만료 시 Refresh Token 으로 재발급
 - **HTTPS 전용 쿠키**: production 모드의 `COOKIE_SECURE=true` 로 리프레시 토큰이 평면 HTTP 로 유출되지 않음
-- **Rate Limiting**: 인증/에이전트 라우트 5 분당 최대 10 회 제한
+- **Rate Limiting**: 인증/에이전트 라우트별 분당 요청 횟수 제한, 초과 시 429 반환
 - **입력 검증**: MAC/IP 형식 검증, 0~100 범위 체크, WOL 브로드캐스트 주소 정규화
 - **오류 정보 누출 방지**: 500 응답 시 내부 에러 메시지 노출 차단
 

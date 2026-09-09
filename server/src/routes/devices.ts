@@ -1,5 +1,3 @@
-import Fastify from 'fastify'
-
 import { DEVICE_WAKE_RATE_LIMIT_MAX } from '../config/constants.js'
 import * as deviceService from '../services/devices.js'
 
