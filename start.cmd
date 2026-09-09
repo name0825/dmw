@@ -4,7 +4,7 @@ setlocal
 cd /d "%~dp0"
 
 REM Default to dev mode if no argument provided
-if "%~1"=="" set ENV=dev
+if "%~1"=="" (set ENV=dev) else (set ENV=%~1)
 
 REM Dev mode
 if "%ENV%"=="dev" (
@@ -36,16 +36,17 @@ if "%ENV%"=="agent" (
   echo Starting DMW backend for agent...
   start "DMW Backend (Agent)" cmd /k "cd /d "%~dp0" && npm run dev:server"
   timeout /t 3 /nobreak >nul
-  echo Please set PAIRING_CODE environment variable and run:
-  echo   set PAIRING_CODE=your-pairing-code
-  echo Then run:
-  echo   start "Agent" cmd /k "cd /d "%~dp0" && node agent-demo\agent-win.js"
+  echo Issue a pairing code from the web UI, then run the agent:
+  echo   npm run agent -- --server http://localhost:3001 --code ^<pairing-code^>
+  echo Or run it without arguments to be prompted:
+  echo   npm run agent
+  echo See agent/README.md for details.
 )
 
 REM Invalid argument
-if "%ENV%" NEQ "dev" AND "%ENV%" NEQ "prod" AND "%ENV%" NEQ "agent" (
-  echo Usage: start.cmd [dev|prod|agent]
-  echo Example: start.cmd dev   (default)
+if not "%ENV%"=="dev" if not "%ENV%"=="prod" if not "%ENV%"=="agent" (
+  echo Usage: start.cmd [dev^|prod^|agent]
+  echo Example: start.cmd dev   ^(default^)
   echo Example: start.cmd prod
   echo Example: start.cmd agent
   exit /b 1

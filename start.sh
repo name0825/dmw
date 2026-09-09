@@ -52,10 +52,11 @@ if [ "$ENV" = "agent" ]; then
     SERVER_PID=$!
 
     sleep 3
-    echo "Please set PAIRING_CODE environment variable and run:"
-    echo "  export PAIRING_CODE=your-pairing-code"
-    echo "Then run:"
-    echo "  node agent-demo/agent-win.js"
+    echo "Issue a pairing code from the web UI, then run the agent:"
+    echo "  npm run agent -- --server http://localhost:3001 --code <pairing-code>"
+    echo "Or run it without arguments to be prompted:"
+    echo "  npm run agent"
+    echo "See agent/README.md for details."
 fi
 
 if [ "$ENV" != "dev" ] && [ "$ENV" != "prod" ] && [ "$ENV" != "agent" ]; then
