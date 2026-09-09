@@ -70,6 +70,14 @@ export const COOKIE_SECURE =
     : APP_ENV === 'production'
 
 /**
+ * Explicit broadcast address for Wake-on-LAN packets.
+ * When unset, the address is derived from the target device IP assuming a /24
+ * subnet, which is the common home-LAN case. Set this when the LAN uses a
+ * different prefix, since a wrong broadcast address makes WOL fail silently.
+ */
+export const WOL_BROADCAST_ADDRESS = process.env.WOL_BROADCAST_ADDRESS || ''
+
+/**
  * Validates runtime configuration and throws errors for insecure production settings.
  * Ensures JWT_SECRET and ADMIN_PASSWORD are properly configured when running in production.
  * Safe to skip in development or test environments.
@@ -91,5 +99,13 @@ export const validateRuntimeConfig = (): void => {
 
   if (!runtimeAdminPassword || runtimeAdminPassword === 'admin123') {
     throw new Error('ADMIN_PASSWORD must be set in production mode.')
+  }
+
+  const runtimeCorsOrigin = normalizeList(process.env.CORS_ORIGIN || process.env.FRONTEND_ORIGIN)
+
+  if (runtimeCorsOrigin.length === 0) {
+    throw new Error(
+      'CORS_ORIGIN must be set in production mode (e.g. CORS_ORIGIN=https://example.com,https://app.example.com).'
+    )
   }
 }

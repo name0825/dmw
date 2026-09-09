@@ -4,19 +4,21 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 
-import { CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
+import { APP_ENV, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware } from './middleware/auth.js'
 import { isPublicRoute } from './auth.js'
 import { registerRoutes } from './routes.js'
-import { setupWebSocket } from './services/ws.js'
+import { setupWebSocket, closeWebSocket } from './services/ws.js'
 
 const app = Fastify({ logger: false })
 
 await app.register(cookie)
 await app.register(cors, {
   origin: (origin, callback) => {
-    const allowedOrigins = new Set([...CORS_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'])
+    const allowedOrigins = new Set(
+      APP_ENV === 'production' ? CORS_ORIGIN : [...CORS_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+    )
     const isAllowed = !origin || allowedOrigins.has(origin)
     callback(null, isAllowed)
   },
@@ -27,7 +29,11 @@ await app.register(rateLimit, {
   max: 300,
   timeWindow: '1 minute',
   keyGenerator: (request: any) => request.ip,
+  // statusCode 를 담지 않으면 Fastify 가 일반 에러로 처리해 500 을 내보낸다.
+  // 한도 초과는 클라이언트가 재시도로 회복할 수 있는 상황이므로 429 여야 한다.
   errorResponseBuilder: (_request: any, context: any) => ({
+    statusCode: 429,
+    error: 'Too Many Requests',
     message: `Too many requests, please try again in ${Math.ceil(context.ttl / 1000)}s`,
   }),
 })
@@ -47,11 +53,37 @@ await pool.run('PRAGMA foreign_keys = ON')
 await registerRoutes(app)
 
 await app.listen({ port: PORT, host: '0.0.0.0' })
-setupWebSocket(app.server)
+setupWebSocket()
 console.log(`DMW server listening on http://localhost:${PORT}`)
 
-process.on('beforeExit', () => {
+let isShuttingDown = false
+
+// HTTP 먼저 닫아 새 요청을 막고, WS 로 실시간 연결을 끊은 뒤, 마지막에 DB 풀을 정리한다.
+const shutdown = async (signal: string) => {
+  if (isShuttingDown) return
+  isShuttingDown = true
+
   console.log('Shutting down...')
-  closePool()
-  app.close()
-})
+
+  const forceExitTimer = setTimeout(() => {
+    console.error('Graceful shutdown timed out, forcing exit')
+    process.exit(1)
+  }, 10000)
+  forceExitTimer.unref()
+
+  let shutdownError: unknown
+  try {
+    await app.close()
+    await closeWebSocket()
+    await closePool()
+  } catch (err) {
+    shutdownError = err
+    console.error('Error during shutdown:', err)
+  } finally {
+    clearTimeout(forceExitTimer)
+    process.exit(shutdownError ? 1 : 0)
+  }
+}
+
+process.on('SIGTERM', () => void shutdown('SIGTERM'))
+process.on('SIGINT', () => void shutdown('SIGINT'))
