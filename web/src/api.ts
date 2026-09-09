@@ -26,6 +26,43 @@ export const requestJson = async (url: string, init: RequestInit = {}) => {
   return { res, data }
 }
 
+let refreshPromise: Promise<string | null> | null = null
+
+/**
+ * Execute an authenticated JSON fetch, retrying once after a refresh when the
+ * server responds with 401. Concurrent 401s share a single in-flight refresh.
+ * @param {string} url - Request URL.
+ * @param {RequestInit} init - Fetch options (Authorization header is added automatically).
+ * @param {string} token - Current access token.
+ * @param {() => Promise<string | null>} refresh - Refreshes the session, returning the new token or null.
+ * @returns {{ res: Response; data: any }} Response and parsed JSON payload from the final attempt.
+ */
+export const authorizedRequest = async (
+  url: string,
+  init: RequestInit,
+  token: string,
+  refresh: () => Promise<string | null>,
+) => {
+  const attempt = (authToken: string) => requestJson(url, {
+    ...init,
+    headers: { ...init.headers, Authorization: `Bearer ${authToken}` },
+  })
+
+  const first = await attempt(token)
+  if (first.res.status !== 401) return first
+
+  if (!refreshPromise) {
+    refreshPromise = refresh().finally(() => {
+      refreshPromise = null
+    })
+  }
+
+  const newToken = await refreshPromise
+  if (!newToken) return first
+
+  return attempt(newToken)
+}
+
 /**
  * Normalize device payloads from the API to numeric metrics.
  * @param {Array<Device>} devices - Raw device records.

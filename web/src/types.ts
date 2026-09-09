@@ -34,9 +34,7 @@ export type AlertItem = {
   value: number
 }
 
-export type AgentState = {
-  serverUrl: string
-  pairingCode: string
-  apiKey: string
-  deviceId: number | null
+export type PairingInfo = {
+  code: string
+  expiresAt: string
 }
