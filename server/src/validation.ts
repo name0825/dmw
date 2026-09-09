@@ -1,3 +1,0 @@
-export { isValidIp, isValidMac, normalizeIp, normalizeMac } from './utils/validation.js'
-
-// ...existing code...
