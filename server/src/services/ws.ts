@@ -1,7 +1,7 @@
 import { WebSocketServer, WebSocket } from 'ws'
 import { PORT } from '../config.js'
 import { getDb } from '../database/index.js'
-import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
+import { verifyTokenAndVersion } from '../auth.js'
 
 /**
  * WebSocket service module
@@ -9,6 +9,10 @@ import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
  */
 
 let wss: WebSocketServer | undefined;
+const authorizedProtocols = new WeakMap<object, string>()
+
+const TOKEN_VERIFY_TTL_MS = 5000
+const verifiedClients = new WeakMap<WebSocket, { user: NonNullable<Awaited<ReturnType<typeof verifyTokenAndVersion>>>; expiresAt: number }>()
 
 /**
  * Broadcasts the current device list to all connected WebSocket clients
@@ -26,11 +30,23 @@ export const broadcastState = async () => {
 
   if (wss && wss.clients.size > 0) {
     const payload = JSON.stringify({ type: 'devices-updated', devices })
-    wss.clients.forEach((client: any) => {
-      if (client.readyState === 1) { // 1 is OPEN
-        client.send(payload)
+    await Promise.all([...wss.clients].map(async (client) => {
+      if (client.readyState !== WebSocket.OPEN) return
+
+      const cached = verifiedClients.get(client)
+      let user = cached && cached.expiresAt > Date.now() ? cached.user : null
+      if (!user) {
+        user = await verifyTokenAndVersion(client.protocol)
+        if (!user) {
+          verifiedClients.delete(client)
+          client.terminate()
+          return
+        }
+        verifiedClients.set(client, { user, expiresAt: Date.now() + TOKEN_VERIFY_TTL_MS })
       }
-    })
+
+      if (client.readyState === WebSocket.OPEN) client.send(payload)
+    }))
   }
 
   return { message: 'State broadcast initiated', deviceCount: devices.length }
@@ -44,29 +60,26 @@ export const setupWebSocket = () => {
   // Initialize WebSocket server
   const server = new WebSocketServer({
     port: PORT + 1,
-    // 실제 인가 판정(서명 + token_version)은 여기서 내린다. handleProtocols 는
-    // 동기 함수라 DB 조회가 불가능하므로 서명 검증만 하는 사전 필터일 뿐이며,
-    // handleProtocols 를 통과했더라도 여기서 거절되면 연결은 성립하지 않는다.
     verifyClient: (info, callback) => {
       const protocolHeader = info.req.headers['sec-websocket-protocol'] || ''
       const tokens = protocolHeader.split(',').map((value) => value.trim()).filter(Boolean)
 
-      Promise.all(tokens.map((token) => verifyTokenAndVersion(token)))
-        .then((users) => {
-          const isAuthorized = users.some((user) => user !== null)
-          if (!isAuthorized) {
+      Promise.all(tokens.map(async (token) => ({ token, user: await verifyTokenAndVersion(token) })))
+        .then((results) => {
+          const authorized = results.find(({ user }) => user !== null)
+          if (!authorized) {
             callback(false, 401, 'Unauthorized')
             return
           }
+          authorizedProtocols.set(info.req, authorized.token)
           callback(true)
         })
         .catch(() => callback(false, 401, 'Unauthorized'))
     },
-    // 서명·만료만 검증해 프로토콜 문자열을 고른다 (동기 함수라 token_version
-    // 조회 불가). 실질적인 인가 판정은 위 verifyClient 가 책임진다.
-    handleProtocols: (protocols) => {
-      const validProtocol = [...protocols].find((protocol) => isValidJwtToken(protocol))
-      return validProtocol || false
+    handleProtocols: (protocols, request) => {
+      const authorizedProtocol = authorizedProtocols.get(request)
+      authorizedProtocols.delete(request)
+      return authorizedProtocol && protocols.has(authorizedProtocol) ? authorizedProtocol : false
     },
   });
   wss = server;

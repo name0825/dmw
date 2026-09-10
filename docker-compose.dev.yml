@@ -1,0 +1,37 @@
+# Dev override. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Both services build the `source` stage of their Dockerfile, which carries
+# the full dependency tree (tsx, vite) and the workspace sources without
+# running the production build. Only the workspace directories are
+# bind-mounted; the hoisted /app/node_modules is never shadowed, and an
+# anonymous volume guards each workspace-local node_modules.
+services:
+  server:
+    build:
+      target: source
+    restart: "no"
+    environment:
+      NODE_ENV: development
+    command: ["npm", "--workspace", "server", "run", "dev"]
+    volumes:
+      - ./server:/app/server
+      # Anonymous volume guard: keeps any workspace-local node_modules from the
+      # image instead of letting the (empty) host directory shadow it.
+      - /app/server/node_modules
+
+  web:
+    build:
+      target: source
+    restart: "no"
+    environment:
+      VITE_API_BASE: ${VITE_API_BASE:-http://localhost:3001}
+      VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:3002}
+    command: ["npm", "--workspace", "web", "run", "dev"]
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./web:/app/web
+      - /app/web/node_modules
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:5173/"]

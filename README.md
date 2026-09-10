@@ -192,7 +192,11 @@ npm run agent
 ### Docker Compose 로 실행
 
 ```bash
-docker-compose up
+# 개발 (핫 리로드)
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+
+# 운영
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
 컨테이너 재시작 후에도 데이터는 `dmw_data` 볼륨으로 영속화됩니다.

@@ -1,0 +1,23 @@
+# Build contexts are the repo root; keep them small.
+.git
+.github
+**/node_modules
+**/dist
+**/data
+**/release
+*.log
+npm-debug.log*
+.env
+.env.*
+!.env.example
+!.env.production.example
+.DS_Store
+docker-compose*.yml
+.dockerignore
+README.md
+REFACTOR_LOG.md
+project.md
+prpt.md
+start.sh
+start.ps1
+start.cmd

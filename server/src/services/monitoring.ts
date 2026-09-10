@@ -45,12 +45,12 @@ export const pruneAlerts = async () => {
  * 기기 상태를 평가하고 DB 에 갱신함.
  */
 export const updateOfflineStates = async () => {
-  const devices = await getDb().all(
-    'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
-    [STATUS_ONLINE, STATUS_OFFLINE, STATUS_WAKE_TIMEOUT],
-  )
-
   await withTransaction(async (tx) => {
+    const devices = await tx.all(
+      'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
+      [STATUS_ONLINE, STATUS_OFFLINE, STATUS_WAKE_TIMEOUT],
+    )
+
     for (const device of devices) {
       const nextStatus = evaluateDeviceStatus(device, new Date())
       if (nextStatus !== device.status) {

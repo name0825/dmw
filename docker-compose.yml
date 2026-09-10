@@ -1,21 +1,31 @@
-version: "3.9"
-
 services:
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
+      target: runtime
     container_name: dmw-server
     restart: unless-stopped
+    # Wake-on-LAN sends a UDP magic packet to a subnet-directed broadcast
+    # address. On bridge networking that packet never reaches the physical LAN,
+    # so the server must share the host network namespace. This is mutually
+    # exclusive with a `ports:` mapping: the app binds PORT (3001) and PORT+1
+    # (3002) directly on the host.
+    # Note: on Docker Desktop (Windows/macOS) the container still does not see
+    # the physical LAN, so WOL only works on a Linux host. Use `start.sh local`
+    # for WOL-less dev on Windows/macOS.
+    network_mode: host
     environment:
       PORT: 3001
       NODE_ENV: production
+      DB_PATH: /app/data/dmw.db
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173,http://127.0.0.1:5173}
-    ports:
-      - "3001:3001"
+      # Optional. When unset the broadcast address is derived from the server's
+      # own IPv4 assuming a /24 subnet.
+      WOL_BROADCAST_ADDRESS: ${WOL_BROADCAST_ADDRESS:-}
     volumes:
       - dmw_data:/app/data
     healthcheck:
@@ -27,15 +37,30 @@ services:
 
   web:
     build:
-      context: ./web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: web/Dockerfile
+      target: runtime
       args:
+        # Baked into the frontend bundle at build time (Vite inlines
+        # import.meta.env.VITE_* at build, not at container start). The
+        # defaults below only work when the browser and the Docker host are
+        # the same machine. To reach this app from any other machine on the
+        # LAN, set these to the server's LAN IP before building, e.g.
+        # VITE_API_BASE=http://192.168.0.10:3001 and
+        # VITE_WS_BASE=ws://192.168.0.10:3002 - otherwise the client's own
+        # localhost is used, which fails. Changing them requires rebuilding
+        # the web image (`--build`); a running container will not pick up a
+        # changed value.
         VITE_API_BASE: ${VITE_API_BASE:-http://localhost:3001}
-        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:3001}
+        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:3002}
     container_name: dmw-web
     restart: unless-stopped
-    ports:
-      - "5173:80"
+    # ports: published per environment - see docker-compose.prod.yml /
+    # docker-compose.dev.yml, each of which publishes host port 5173 exactly
+    # once.
+    # nginx proxies /api to the host-networked server.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       - server
     healthcheck:
