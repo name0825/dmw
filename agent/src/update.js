@@ -63,14 +63,22 @@ export const checkForUpdate = async ({ fetchImpl = fetch, version = currentVersi
     const bundle = validateBundle(bytes, checksum, next)
     const destination = path.join(getStateDir(), 'versions', next)
     if (fs.existsSync(destination)) {
-      for (const [name, content] of Object.entries(bundle.files)) {
+      const matches = Object.entries(bundle.files).every(([name, content]) => {
         const existing = path.join(destination, name)
-        if (!fs.existsSync(existing) || fs.readFileSync(existing, 'utf8') !== content) throw new Error('기존 업데이트 디렉토리 검증 실패')
+        return fs.existsSync(existing) && fs.readFileSync(existing, 'utf8') === content
+      })
+      if (matches) {
+        const check = spawnSync(process.execPath, [path.join(destination, 'src/index.js'), '--help'], { timeout: 15000, encoding: 'utf8', windowsHide: true })
+        if (check.error || check.status !== 0) throw new Error('기존 업데이트 시작 검증 실패')
+        writeState('active.json', { version: next })
+        return true
       }
-      const check = spawnSync(process.execPath, [path.join(destination, 'src/index.js'), '--help'], { timeout: 15000, encoding: 'utf8', windowsHide: true })
-      if (check.error || check.status !== 0) throw new Error('기존 업데이트 시작 검증 실패')
-      writeState('active.json', { version: next })
-      return true
+      // 내용이 다른 versions/<next>는 손상된 잔여물이므로 재검증된 다운로드로 다시 스테이징한다.
+      if (readState('active.json')?.version === next) throw new Error('활성 버전 디렉토리가 손상되어 자동 복구할 수 없습니다')
+      const versionsRoot = path.resolve(getStateDir(), 'versions')
+      const resolved = path.resolve(destination)
+      if (path.dirname(resolved) !== versionsRoot) throw new Error('허용되지 않은 업데이트 경로')
+      fs.rmSync(resolved, { recursive: true, force: true })
     }
     const staging = `${destination}.${process.pid}.${Date.now()}.tmp`
     fs.mkdirSync(staging, { recursive: true })
