@@ -78,6 +78,9 @@ export const checkForUpdate = async ({ fetchImpl = fetch, version = currentVersi
       const versionsRoot = path.resolve(getStateDir(), 'versions')
       const resolved = path.resolve(destination)
       if (path.dirname(resolved) !== versionsRoot) throw new Error('허용되지 않은 업데이트 경로')
+      const stat = fs.lstatSync(resolved)
+      if (stat.isSymbolicLink()) throw new Error('업데이트 대상이 심볼릭 링크/junction 이라 삭제를 거부합니다')
+      if (!stat.isDirectory()) throw new Error('업데이트 대상이 디렉터리가 아니라 삭제를 거부합니다')
       fs.rmSync(resolved, { recursive: true, force: true })
     }
     const staging = `${destination}.${process.pid}.${Date.now()}.tmp`

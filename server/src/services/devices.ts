@@ -197,12 +197,17 @@ export const handleUpdateDevice = async (request: any, reply: any) => {
       // status 는 이 UPDATE 문 실행 시점의 값을 기준으로 CASE 안에서 함께 읽고
       // 쓴다 — 별도 SELECT 로 미리 읽으면 그 사이 wake/updateOfflineStates 가
       // status 를 바꿔 잘못된 분기를 타는 경합이 생긴다.
-      await withTransaction(async (tx) => {
-        await tx.run(
+      const result = await withTransaction(async (tx) => {
+        return tx.run(
           'UPDATE devices SET name = ?, mac_address = ?, ip_address = ?, updated_at = CASE WHEN status = ? THEN updated_at ELSE ? END WHERE id = ?',
           [name, normalizedMac, normalizedIp, STATUS_WAKE_TIMEOUT, new Date().toISOString(), id]
         )
       })
+      if (result.changes === 0) {
+        // 존재 확인(SELECT) 과 UPDATE 사이에 다른 요청이 이 디바이스를 삭제한 경우.
+        reply.code(404).send({ message: 'Device not found' })
+        return
+      }
     } catch (error) {
       const isDuplicate = String((error as any)?.code || '').startsWith('SQLITE_CONSTRAINT')
       if (isDuplicate) {

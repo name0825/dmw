@@ -63,6 +63,41 @@ test('handleUpdateDevice leaves updated_at untouched while the device is WAKE_TI
   await db.run('DELETE FROM devices WHERE id = ?', [device.lastID])
 })
 
+test('handleUpdateDevice returns 404 when the device is deleted between the existence check and the UPDATE', async () => {
+  await initPool()
+  const db = getDb()
+
+  const device = await db.run(
+    'INSERT INTO devices (name, mac_address, ip_address, status, updated_at) VALUES (?, ?, ?, ?, ?)',
+    ['Device Race', 'AA:BB:CC:DD:EE:22', '192.168.1.52', STATUS_ONLINE, new Date().toISOString()]
+  )
+
+  // 존재 확인 SELECT 직후, UPDATE 가 실행되기 전에 다른 요청이 이 디바이스를 삭제한 상황을 재현한다.
+  const originalGet = db.get.bind(db)
+  db.get = async (sql: string, params: unknown) => {
+    const result = await originalGet(sql, params)
+    if (sql === 'SELECT id FROM devices WHERE id = ?') {
+      await db.run('DELETE FROM devices WHERE id = ?', [device.lastID])
+    }
+    return result
+  }
+
+  try {
+    const res = reply()
+    await handleUpdateDevice(
+      {
+        params: { id: device.lastID },
+        body: { name: 'Device Race Renamed', mac_address: 'AA:BB:CC:DD:EE:22', ip_address: '192.168.1.52' },
+      },
+      res
+    )
+    assert.equal(res.status, 404)
+    assert.deepEqual(res.body, { message: 'Device not found' })
+  } finally {
+    db.get = originalGet
+  }
+})
+
 test('handleUpdateDevice bumps updated_at when the device is not WAKE_TIMEOUT', async () => {
   await initPool()
   const db = getDb()

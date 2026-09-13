@@ -251,6 +251,48 @@ test('a versions/<next> directory that becomes the active version mid-update is 
   })
 })
 
+test('a versions/<next> path that is a symlink/junction is refused instead of being deleted', async (t) => {
+  await withStateDir(async (state) => {
+    const files = {
+      'package.json': JSON.stringify({ version: '1.1.0', type: 'module' }),
+      'src/index.js': 'process.exit(0)',
+    }
+    const bundle = Buffer.from(JSON.stringify({ version: '1.1.0', files }))
+    const checksum = createHash('sha256').update(bundle).digest('hex')
+    const destination = path.join(state, 'versions', '1.1.0')
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-agent-symlink-target-'))
+    fs.mkdirSync(path.dirname(destination), { recursive: true })
+    try {
+      fs.symlinkSync(target, destination, 'junction')
+    } catch (error) {
+      if (error.code === 'EPERM') {
+        fs.rmSync(target, { recursive: true, force: true })
+        t.skip('symlink/junction creation not permitted')
+        return
+      }
+      throw error
+    }
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    const fetchImpl = async (url) => {
+      if (url.includes('/releases/latest')) return response(JSON.stringify({ tag_name: 'v1.1.0', assets: [
+        { name: 'dmw-agent-1.1.0.json', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json' },
+        { name: 'dmw-agent-1.1.0.json.sha256', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json.sha256' },
+      ] }))
+      if (url.endsWith('.json')) return response(bundle)
+      return response(checksum)
+    }
+
+    try {
+      await assert.rejects(checkForUpdate({ fetchImpl, version: '1.0.0' }), /심볼릭 링크/)
+      assert.equal(fs.lstatSync(destination).isSymbolicLink(), true)
+      assert.equal(fs.existsSync(target), true)
+    } finally {
+      fs.rmSync(destination, { force: true })
+      fs.rmSync(target, { recursive: true, force: true })
+    }
+  })
+})
+
 const startServer = async (handler) => {
   const server = http.createServer(handler)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -294,6 +336,18 @@ const runAgent = (args, env) => new Promise((resolve, reject) => {
   const child = spawn(process.execPath, ['agent/src/index.js', ...args], { cwd: path.resolve('.'), env: { ...process.env, ...env }, stdio: 'ignore' })
   child.once('error', reject)
   child.once('exit', (code, signal) => resolve({ child, code, signal }))
+})
+
+test('requestJson returns a literal JSON null ok body instead of treating it as invalid', async () => {
+  const { server, url } = await startServer((request, result) => {
+    result.writeHead(200, { 'Content-Type': 'application/json' })
+    result.end('null')
+  })
+  try {
+    assert.equal(await requestJson(url), null)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('CLI unpair sends the stored key to the server and clears local credentials', async () => {
