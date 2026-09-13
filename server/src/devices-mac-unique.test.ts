@@ -123,6 +123,54 @@ test('initDb does not throw and preserves rows when a legacy database already ha
   }
 })
 
+test('initDb adds pairing_codes.target_device_id to a legacy database without it', async () => {
+  const dbFile = path.join(databaseDirectory, 'legacy-pairing-codes.db')
+  const db = await openRawDb(dbFile)
+  try {
+    await db.exec(`
+      CREATE TABLE devices (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        mac_address TEXT NOT NULL,
+        ip_address TEXT NOT NULL,
+        agent_key_hash TEXT,
+        agent_key_hint TEXT,
+        agent_paired INTEGER NOT NULL DEFAULT 0,
+        paired_at TEXT,
+        last_seen TEXT,
+        status TEXT NOT NULL DEFAULT 'NOT_PAIRED',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE pairing_codes (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        device_id INTEGER,
+        code TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        used_at TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+      );
+    `)
+    await db.run(
+      'INSERT INTO pairing_codes (code, expires_at) VALUES (?, ?)',
+      ['LEGACY01', new Date(Date.now() + 60_000).toISOString()]
+    )
+
+    await assert.doesNotReject(initDb(db))
+
+    const columns = await db.all('PRAGMA table_info(pairing_codes)')
+    assert.ok(columns.some((column: any) => column.name === 'target_device_id'))
+
+    const row = await db.get('SELECT target_device_id FROM pairing_codes WHERE code = ?', ['LEGACY01'])
+    assert.equal(row.target_device_id, null)
+
+    await assert.doesNotReject(initDb(db))
+  } finally {
+    await db.close()
+  }
+})
+
 test('handleUpdateDevice rejects renaming to another device\'s MAC but allows keeping its own MAC', async () => {
   await initPool()
   const db = getDb()

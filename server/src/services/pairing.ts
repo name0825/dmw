@@ -16,11 +16,11 @@ import { getDb } from '../database/index.js'
  * A second collision is astronomically unlikely and is left to the caller's 500
  * handler — retrying in a loop would only hide a real constraint problem.
  */
-export const insertPairingCode = async (db: any, expiresAt: string): Promise<string> => {
+export const insertPairingCode = async (db: any, expiresAt: string, targetDeviceId: number | null = null): Promise<string> => {
   for (let attempt = 0; ; attempt++) {
     const code = randomBytes(4).toString('hex').toUpperCase()
     try {
-      await db.run('INSERT INTO pairing_codes (code, expires_at) VALUES (?, ?)', [code, expiresAt])
+      await db.run('INSERT INTO pairing_codes (code, expires_at, target_device_id) VALUES (?, ?, ?)', [code, expiresAt, targetDeviceId])
       return code
     } catch (error) {
       const isDuplicate = String((error as any)?.code || '').startsWith('SQLITE_CONSTRAINT')
@@ -31,14 +31,32 @@ export const insertPairingCode = async (db: any, expiresAt: string): Promise<str
 }
 
 /**
- * Handles issuing a device-independent one-time pairing code.
+ * Handles issuing a pairing code.
+ * body.deviceId 가 없으면 기기와 무관한(신규 기기용) 코드를 발급한다.
+ * body.deviceId 가 있으면 그 기기에 묶인 코드를 발급한다 — 재페어링은 이 코드로만
+ * 허용되어, 다른 기기의 코드로 이미 페어링된 기기를 가로챌 수 없다.
  * 관리자 인증이 필요한 라우트에서만 호출된다 (공개 라우트가 아니다).
  */
 export const handleCreatePairingCode = async (request: any, reply: any) => {
+  const { deviceId } = (request.body || {}) as { deviceId?: number }
   const expiresAt = new Date(Date.now() + PAIRING_TTL_MS).toISOString()
 
   try {
-    const code = await insertPairingCode(getDb(), expiresAt)
+    let targetDeviceId: number | null = null
+    if (deviceId !== undefined && deviceId !== null) {
+      if (!Number.isInteger(deviceId) || deviceId <= 0) {
+        reply.code(400).send({ message: 'Invalid deviceId' })
+        return
+      }
+      const device = await getDb().get('SELECT id FROM devices WHERE id = ?', [deviceId])
+      if (!device) {
+        reply.code(404).send({ message: 'Device not found' })
+        return
+      }
+      targetDeviceId = device.id
+    }
+
+    const code = await insertPairingCode(getDb(), expiresAt, targetDeviceId)
     reply.code(201).send({ code, expiresAt })
   } catch (error) {
     console.error('Error creating pairing code:', error)
