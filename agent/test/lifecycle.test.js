@@ -6,11 +6,14 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 import { autostartEntry, installLauncher } from '../src/autostart.js'
 import { parseArgs } from '../src/config.js'
 import { checkForUpdate, isNewerVersion, validateBundle } from '../src/update.js'
 import { HttpError, requestJson } from '../src/http.js'
+
+const agentEntry = fileURLToPath(new URL('../src/index.js', import.meta.url))
 
 const withStateDir = async (fn) => {
   const previous = process.env.DMW_STATE_DIR
@@ -333,7 +336,7 @@ test('requestJson throws a clear error for an unparseable ok body', async () => 
 })
 
 const runAgent = (args, env) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, ['agent/src/index.js', ...args], { cwd: path.resolve('.'), env: { ...process.env, ...env }, stdio: 'ignore' })
+  const child = spawn(process.execPath, [agentEntry, ...args], { env: { ...process.env, ...env }, stdio: 'ignore' })
   child.once('error', reject)
   child.once('exit', (code, signal) => resolve({ child, code, signal }))
 })
@@ -381,7 +384,7 @@ test('running agent applies a replacement credential without restart', async () 
       result.writeHead(200, { 'Content-Type': 'application/json' })
       result.end(JSON.stringify({ status: 'ok' }))
     })
-    const child = spawn(process.execPath, ['agent/src/index.js', '--background', '--interval', '1000', '--no-update'], { cwd: path.resolve('.'), env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
+    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
     try {
       fs.writeFileSync(path.join(state, 'credentials.json'), JSON.stringify({ serverUrl: url, deviceId: 1, apiKey: 'initial-key' }))
       await new Promise((resolve, reject) => {
