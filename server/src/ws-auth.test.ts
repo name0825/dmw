@@ -8,21 +8,22 @@ import { WebSocket } from 'ws'
 const databaseDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-server-ws-auth-test-'))
 process.env.DB_PATH = path.join(databaseDirectory, 'dmw.db')
 process.env.PORT = String(20_000 + (process.pid % 20_000))
+process.env.WS_PORT = String(Number(process.env.PORT) + 1)
 
 const { initPool, closePool, getDb } = await import('./database/index.js')
-const { ADMIN_EMAIL, PORT } = await import('./config.js')
+const { ADMIN_EMAIL, WS_PORT } = await import('./config.js')
 const { createToken } = await import('./auth.js')
 const { bumpTokenVersion } = await import('./database/auth.js')
 const { setupWebSocket, closeWebSocket, broadcastState } = await import('./services/ws.js')
 
 const connect = (token: string) => new Promise<WebSocket>((resolve, reject) => {
-  const client = new WebSocket(`ws://127.0.0.1:${PORT + 1}`, token)
+  const client = new WebSocket(`ws://127.0.0.1:${WS_PORT}`, token)
   client.once('open', () => resolve(client))
   client.once('error', reject)
 })
 
 const rejectConnection = (tokens: string[]) => new Promise<void>((resolve, reject) => {
-  const client = new WebSocket(`ws://127.0.0.1:${PORT + 1}`, tokens)
+  const client = new WebSocket(`ws://127.0.0.1:${WS_PORT}`, tokens)
   client.once('open', () => {
     client.close()
     reject(new Error('connection unexpectedly opened'))

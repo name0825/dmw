@@ -1,10 +1,17 @@
-import 'dotenv/config'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+import dotenv from 'dotenv'
 
 // ============================================================================
 // Configuration module for DMW server
 // Environment variables take precedence over defaults
 // ============================================================================
+
+dotenv.config()
+
+const moduleDir = path.dirname(fileURLToPath(import.meta.url))
+const repoRoot = path.join(moduleDir, '..', '..')
+dotenv.config({ path: process.env.DMW_CONFIG || path.join(repoRoot, 'dmw.conf') })
 
 const DEFAULT_PORT = 3001
 
@@ -26,9 +33,14 @@ const normalizeList = (value?: string): string[] =>
 export const APP_ENV = process.env.NODE_ENV || 'development'
 
 /**
- * Server port number. Defaults to 3001 if PORT is not set.
+ * Server port number. PORT (alias for SERVER_PORT) takes precedence, then
+ * SERVER_PORT from the environment or dmw.conf, then the built-in default.
  */
-export const PORT = Number(process.env.PORT || DEFAULT_PORT)
+export const PORT = Number(process.env.PORT || process.env.SERVER_PORT || DEFAULT_PORT)
+
+export const WS_PORT = Number(process.env.WS_PORT || PORT + 1)
+
+export const WEB_DEV_PORT = Number(process.env.WEB_DEV_PORT || 5173)
 
 /**
  * JWT secret key for token signing.
