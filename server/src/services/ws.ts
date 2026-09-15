@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
-import { PORT } from '../config.js'
+import { WS_PORT } from '../config.js'
 import { getDb } from '../database/index.js'
 import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
 
@@ -26,35 +26,46 @@ export const broadcastState = async () => {
 
   if (wss && wss.clients.size > 0) {
     const payload = JSON.stringify({ type: 'devices-updated', devices })
-    wss.clients.forEach((client: any) => {
-      if (client.readyState === 1) { // 1 is OPEN
-        client.send(payload)
+    await Promise.all([...wss.clients].map(async (client) => {
+      if (client.readyState !== WebSocket.OPEN) return
+
+      const user = await verifyTokenAndVersion(client.protocol)
+      if (!user) {
+        client.close(1008, 'Unauthorized')
+        return
       }
-    })
+
+      if (client.readyState === WebSocket.OPEN) client.send(payload)
+    }))
   }
 
   return { message: 'State broadcast initiated', deviceCount: devices.length }
 }
 
 /**
- * Starts the WebSocket server on PORT + 1.
+ * Starts the WebSocket server on WS_PORT.
  * 이 서버는 Fastify 와 포트를 공유하지 않는 독립 리스너이므로 app 인스턴스가 필요 없다.
  */
 export const setupWebSocket = () => {
   // Initialize WebSocket server
   const server = new WebSocketServer({
-    port: PORT + 1,
+    port: WS_PORT,
     // 실제 인가 판정(서명 + token_version)은 여기서 내린다. handleProtocols 는
     // 동기 함수라 DB 조회가 불가능하므로 서명 검증만 하는 사전 필터일 뿐이며,
     // handleProtocols 를 통과했더라도 여기서 거절되면 연결은 성립하지 않는다.
     verifyClient: (info, callback) => {
       const protocolHeader = info.req.headers['sec-websocket-protocol'] || ''
       const tokens = protocolHeader.split(',').map((value) => value.trim()).filter(Boolean)
+      const selectedToken = tokens.find((token) => isValidJwtToken(token))
 
-      Promise.all(tokens.map((token) => verifyTokenAndVersion(token)))
-        .then((users) => {
-          const isAuthorized = users.some((user) => user !== null)
-          if (!isAuthorized) {
+      if (!selectedToken) {
+        callback(false, 401, 'Unauthorized')
+        return
+      }
+
+      verifyTokenAndVersion(selectedToken)
+        .then((user) => {
+          if (!user) {
             callback(false, 401, 'Unauthorized')
             return
           }

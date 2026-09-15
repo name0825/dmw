@@ -172,7 +172,7 @@ export const handleUpdateDevice = async (request: any, reply: any) => {
 
   const db = getDb()
   try {
-    const existing = await db.get('SELECT id, status FROM devices WHERE id = ?', [id])
+    const existing = await db.get('SELECT id FROM devices WHERE id = ?', [id])
     if (!existing) {
       reply.code(404).send({ message: 'Device not found' })
       return
@@ -194,20 +194,19 @@ export const handleUpdateDevice = async (request: any, reply: any) => {
       // WAKE_TIMEOUT deadline from it. Bumping it while the device is still
       // WAKE_TIMEOUT would restart the 3-minute wake timer just because an admin
       // renamed the device, so the timestamp is left alone in that state only.
-      if (existing.status === STATUS_WAKE_TIMEOUT) {
-        await withTransaction(async (tx) => {
-          await tx.run(
-            'UPDATE devices SET name = ?, mac_address = ?, ip_address = ? WHERE id = ?',
-            [name, normalizedMac, normalizedIp, id]
-          )
-        })
-      } else {
-        await withTransaction(async (tx) => {
-          await tx.run(
-            'UPDATE devices SET name = ?, mac_address = ?, ip_address = ?, updated_at = ? WHERE id = ?',
-            [name, normalizedMac, normalizedIp, new Date().toISOString(), id]
-          )
-        })
+      // status 는 이 UPDATE 문 실행 시점의 값을 기준으로 CASE 안에서 함께 읽고
+      // 쓴다 — 별도 SELECT 로 미리 읽으면 그 사이 wake/updateOfflineStates 가
+      // status 를 바꿔 잘못된 분기를 타는 경합이 생긴다.
+      const result = await withTransaction(async (tx) => {
+        return tx.run(
+          'UPDATE devices SET name = ?, mac_address = ?, ip_address = ?, updated_at = CASE WHEN status = ? THEN updated_at ELSE ? END WHERE id = ?',
+          [name, normalizedMac, normalizedIp, STATUS_WAKE_TIMEOUT, new Date().toISOString(), id]
+        )
+      })
+      if (result.changes === 0) {
+        // 존재 확인(SELECT) 과 UPDATE 사이에 다른 요청이 이 디바이스를 삭제한 경우.
+        reply.code(404).send({ message: 'Device not found' })
+        return
       }
     } catch (error) {
       const isDuplicate = String((error as any)?.code || '').startsWith('SQLITE_CONSTRAINT')

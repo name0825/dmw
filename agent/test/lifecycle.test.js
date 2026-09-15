@@ -6,10 +6,14 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 
 import { autostartEntry, installLauncher } from '../src/autostart.js'
 import { parseArgs } from '../src/config.js'
 import { checkForUpdate, isNewerVersion, validateBundle } from '../src/update.js'
+import { HttpError, requestJson } from '../src/http.js'
+
+const agentEntry = fileURLToPath(new URL('../src/index.js', import.meta.url))
 
 const withStateDir = async (fn) => {
   const previous = process.env.DMW_STATE_DIR
@@ -191,6 +195,107 @@ test('validated existing release is recovered as active without overwriting it',
   })
 })
 
+test('a stale versions/<next> directory with mismatched contents is replaced and the update succeeds', async () => {
+  await withStateDir(async (state) => {
+    const files = {
+      'package.json': JSON.stringify({ version: '1.1.0', type: 'module' }),
+      'src/index.js': 'if (process.argv.includes("--help")) process.exit(0); process.exit(1)',
+    }
+    const bundle = Buffer.from(JSON.stringify({ version: '1.1.0', files }))
+    const checksum = createHash('sha256').update(bundle).digest('hex')
+    const destination = path.join(state, 'versions', '1.1.0')
+    fs.mkdirSync(path.join(destination, 'src'), { recursive: true })
+    fs.writeFileSync(path.join(destination, 'package.json'), files['package.json'])
+    fs.writeFileSync(path.join(destination, 'src', 'index.js'), 'process.exit(1)')
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    const fetchImpl = async (url) => {
+      if (url.includes('/releases/latest')) return response(JSON.stringify({ tag_name: 'v1.1.0', assets: [
+        { name: 'dmw-agent-1.1.0.json', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json' },
+        { name: 'dmw-agent-1.1.0.json.sha256', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json.sha256' },
+      ] }))
+      if (url.endsWith('.json')) return response(bundle)
+      return response(checksum)
+    }
+
+    assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), true)
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0' })
+    assert.equal(fs.readFileSync(path.join(destination, 'src', 'index.js'), 'utf8'), files['src/index.js'])
+  })
+})
+
+test('a versions/<next> directory that becomes the active version mid-update is not deleted', async () => {
+  await withStateDir(async (state) => {
+    const files = {
+      'package.json': JSON.stringify({ version: '1.1.0', type: 'module' }),
+      'src/index.js': 'process.exit(0)',
+    }
+    const bundle = Buffer.from(JSON.stringify({ version: '1.1.0', files }))
+    const checksum = createHash('sha256').update(bundle).digest('hex')
+    const destination = path.join(state, 'versions', '1.1.0')
+    fs.mkdirSync(path.join(destination, 'src'), { recursive: true })
+    fs.writeFileSync(path.join(destination, 'package.json'), files['package.json'])
+    fs.writeFileSync(path.join(destination, 'src', 'index.js'), 'corrupted')
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    const fetchImpl = async (url) => {
+      if (url.includes('/releases/latest')) return response(JSON.stringify({ tag_name: 'v1.1.0', assets: [
+        { name: 'dmw-agent-1.1.0.json', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json' },
+        { name: 'dmw-agent-1.1.0.json.sha256', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json.sha256' },
+      ] }))
+      if (url.endsWith('.sha256')) {
+        // 다운로드가 끝나기 전에 다른 프로세스가 이 버전을 활성 버전으로 표시했다고 가정한다.
+        fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.1.0' }))
+        return response(checksum)
+      }
+      return response(bundle)
+    }
+
+    await assert.rejects(checkForUpdate({ fetchImpl, version: '1.0.0' }), /손상/)
+    assert.equal(fs.readFileSync(path.join(destination, 'src', 'index.js'), 'utf8'), 'corrupted')
+  })
+})
+
+test('a versions/<next> path that is a symlink/junction is refused instead of being deleted', async (t) => {
+  await withStateDir(async (state) => {
+    const files = {
+      'package.json': JSON.stringify({ version: '1.1.0', type: 'module' }),
+      'src/index.js': 'process.exit(0)',
+    }
+    const bundle = Buffer.from(JSON.stringify({ version: '1.1.0', files }))
+    const checksum = createHash('sha256').update(bundle).digest('hex')
+    const destination = path.join(state, 'versions', '1.1.0')
+    const target = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-agent-symlink-target-'))
+    fs.mkdirSync(path.dirname(destination), { recursive: true })
+    try {
+      fs.symlinkSync(target, destination, 'junction')
+    } catch (error) {
+      if (error.code === 'EPERM') {
+        fs.rmSync(target, { recursive: true, force: true })
+        t.skip('symlink/junction creation not permitted')
+        return
+      }
+      throw error
+    }
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    const fetchImpl = async (url) => {
+      if (url.includes('/releases/latest')) return response(JSON.stringify({ tag_name: 'v1.1.0', assets: [
+        { name: 'dmw-agent-1.1.0.json', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json' },
+        { name: 'dmw-agent-1.1.0.json.sha256', browser_download_url: 'https://github.com/name0825/dmw/releases/download/v1.1.0/dmw-agent-1.1.0.json.sha256' },
+      ] }))
+      if (url.endsWith('.json')) return response(bundle)
+      return response(checksum)
+    }
+
+    try {
+      await assert.rejects(checkForUpdate({ fetchImpl, version: '1.0.0' }), /심볼릭 링크/)
+      assert.equal(fs.lstatSync(destination).isSymbolicLink(), true)
+      assert.equal(fs.existsSync(target), true)
+    } finally {
+      fs.rmSync(destination, { force: true })
+      fs.rmSync(target, { recursive: true, force: true })
+    }
+  })
+})
+
 const startServer = async (handler) => {
   const server = http.createServer(handler)
   await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
@@ -198,10 +303,54 @@ const startServer = async (handler) => {
   return { server, url: `http://127.0.0.1:${address.port}` }
 }
 
+test('requestJson throws HttpError with the response status for a non-JSON error body', async () => {
+  const { server, url } = await startServer((request, result) => {
+    result.writeHead(502, { 'Content-Type': 'text/html' })
+    result.end('<html>Bad Gateway</html>')
+  })
+  try {
+    await assert.rejects(requestJson(url), (error) => {
+      assert.ok(error instanceof HttpError)
+      assert.equal(error.status, 502)
+      return true
+    })
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
+test('requestJson throws a clear error for an unparseable ok body', async () => {
+  const { server, url } = await startServer((request, result) => {
+    result.writeHead(200, { 'Content-Type': 'text/plain' })
+    result.end('not json')
+  })
+  try {
+    await assert.rejects(requestJson(url), (error) => {
+      assert.ok(!(error instanceof HttpError))
+      assert.match(error.message, /Invalid JSON/)
+      return true
+    })
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
+
 const runAgent = (args, env) => new Promise((resolve, reject) => {
-  const child = spawn(process.execPath, ['agent/src/index.js', ...args], { cwd: path.resolve('.'), env: { ...process.env, ...env }, stdio: 'ignore' })
+  const child = spawn(process.execPath, [agentEntry, ...args], { env: { ...process.env, ...env }, stdio: 'ignore' })
   child.once('error', reject)
   child.once('exit', (code, signal) => resolve({ child, code, signal }))
+})
+
+test('requestJson returns a literal JSON null ok body instead of treating it as invalid', async () => {
+  const { server, url } = await startServer((request, result) => {
+    result.writeHead(200, { 'Content-Type': 'application/json' })
+    result.end('null')
+  })
+  try {
+    assert.equal(await requestJson(url), null)
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
 })
 
 test('CLI unpair sends the stored key to the server and clears local credentials', async () => {
@@ -235,7 +384,7 @@ test('running agent applies a replacement credential without restart', async () 
       result.writeHead(200, { 'Content-Type': 'application/json' })
       result.end(JSON.stringify({ status: 'ok' }))
     })
-    const child = spawn(process.execPath, ['agent/src/index.js', '--background', '--interval', '1000', '--no-update'], { cwd: path.resolve('.'), env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
+    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
     try {
       fs.writeFileSync(path.join(state, 'credentials.json'), JSON.stringify({ serverUrl: url, deviceId: 1, apiKey: 'initial-key' }))
       await new Promise((resolve, reject) => {
