@@ -4,7 +4,9 @@ export const getApiBaseUrl = () => (import.meta.env.VITE_API_BASE || 'http://loc
 
 export const getWebSocketBaseUrl = () => (
   import.meta.env.VITE_WS_BASE ||
-  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+  (window.location.protocol === 'https:'
+    ? `wss://${window.location.host}`
+    : `ws://${window.location.hostname}:3002`)
 ).replace(/\/$/, '')
 
 /**

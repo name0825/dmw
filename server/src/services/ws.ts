@@ -26,11 +26,17 @@ export const broadcastState = async () => {
 
   if (wss && wss.clients.size > 0) {
     const payload = JSON.stringify({ type: 'devices-updated', devices })
-    wss.clients.forEach((client: any) => {
-      if (client.readyState === 1) { // 1 is OPEN
-        client.send(payload)
+    await Promise.all([...wss.clients].map(async (client) => {
+      if (client.readyState !== WebSocket.OPEN) return
+
+      const user = await verifyTokenAndVersion(client.protocol)
+      if (!user) {
+        client.close(1008, 'Unauthorized')
+        return
       }
-    })
+
+      if (client.readyState === WebSocket.OPEN) client.send(payload)
+    }))
   }
 
   return { message: 'State broadcast initiated', deviceCount: devices.length }
@@ -50,11 +56,16 @@ export const setupWebSocket = () => {
     verifyClient: (info, callback) => {
       const protocolHeader = info.req.headers['sec-websocket-protocol'] || ''
       const tokens = protocolHeader.split(',').map((value) => value.trim()).filter(Boolean)
+      const selectedToken = tokens.find((token) => isValidJwtToken(token))
 
-      Promise.all(tokens.map((token) => verifyTokenAndVersion(token)))
-        .then((users) => {
-          const isAuthorized = users.some((user) => user !== null)
-          if (!isAuthorized) {
+      if (!selectedToken) {
+        callback(false, 401, 'Unauthorized')
+        return
+      }
+
+      verifyTokenAndVersion(selectedToken)
+        .then((user) => {
+          if (!user) {
             callback(false, 401, 'Unauthorized')
             return
           }

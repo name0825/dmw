@@ -172,3 +172,31 @@ test('refresh after logout yields a plain 401 without wiping other sessions', as
   const userAfterReplay = await db.get('SELECT token_version FROM users WHERE id = ?', [user.id])
   assert.equal(userAfterReplay.token_version, user.token_version + 1)
 })
+
+test('logout with a rotated token revokes its live successor', async () => {
+  const { refreshToken } = await login()
+  const db = getDb()
+  const user = await db.get('SELECT id, token_version FROM users WHERE email = ?', [ADMIN_EMAIL])
+
+  const refreshReply = reply()
+  await handleRefresh(requestWithCookie(refreshToken), refreshReply)
+  assert.equal(refreshReply.status, 200)
+  const successor = refreshReply.cookies.refreshToken
+  assert.ok(successor)
+
+  const logoutReply = reply()
+  await handleLogout(requestWithCookie(refreshToken), logoutReply)
+
+  const successorReply = reply()
+  await handleRefresh(requestWithCookie(successor), successorReply)
+  assert.equal(successorReply.status, 401)
+
+  const liveTokens = await db.all(
+    'SELECT id FROM refresh_tokens WHERE user_id = ? AND revoked = 0',
+    [user.id],
+  )
+  assert.equal(liveTokens.length, 0)
+
+  const userAfter = await db.get('SELECT token_version FROM users WHERE id = ?', [user.id])
+  assert.equal(userAfter.token_version, user.token_version + 1)
+})

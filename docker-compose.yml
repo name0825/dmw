@@ -16,6 +16,7 @@ services:
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:5173,http://127.0.0.1:5173}
     ports:
       - "3001:3001"
+      - "3002:3002"
     volumes:
       - dmw_data:/app/data
     healthcheck:
@@ -31,7 +32,7 @@ services:
       dockerfile: Dockerfile
       args:
         VITE_API_BASE: ${VITE_API_BASE:-http://localhost:3001}
-        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:3001}
+        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:3002}
     container_name: dmw-web
     restart: unless-stopped
     ports:

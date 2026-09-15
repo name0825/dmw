@@ -201,14 +201,15 @@ export const handleLogout = async (_request: any, reply: any) => {
   const refreshToken = extractRefreshToken(_request)
 
   if (refreshToken) {
-    const matched = await findRefreshTokenMatch(refreshToken)
-    if (matched) {
-      await revokeRefreshToken(matched.id)
-      // access token 은 stateless 라 서명만으로는 회수할 수 없다. token_version 을 올려
-      // 이미 발급된 토큰이 만료 (1 일) 를 기다리지 않고 즉시 죽게 한다.
-      await bumpTokenVersion(matched.user_id)
-    }
+    await withTransaction(async (tx) => {
+      const matched = await findRefreshTokenMatch(refreshToken, tx)
+      const revokedMatch = matched ? null : await findRevokedRefreshTokenMatch(refreshToken, tx)
+      const liveToken = matched || (revokedMatch ? await findLiveRotationTip(revokedMatch, tx) : null)
+      if (!liveToken) return
 
+      await revokeRefreshToken(liveToken.id, tx)
+      await bumpTokenVersion(liveToken.user_id, tx)
+    })
   }
 
   reply.clearCookie('refreshToken')
