@@ -386,7 +386,11 @@ export default function App() {
   const wakeDevice = async (id: number) => {
     const { res, data } = await authedRequest(`${apiBase}/devices/${id}/wake`, { method: 'POST' })
 
-    setMessage(data?.message || 'Wake 요청 전송')
+    if (res.ok && data?.agentPaired === false) {
+      setMessage('WOL 신호는 보냈지만 Agent가 설치/페어링되지 않아 전원 상태를 확인할 수 없습니다.')
+    } else {
+      setMessage(data?.message || 'Wake 요청 전송')
+    }
     if (res.ok) {
       await loadDevices()
     }
