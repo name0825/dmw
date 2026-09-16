@@ -27,6 +27,7 @@ DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LA
 - **로그인 자동 실행**: 첫 성공 페어링 뒤 사용자 로그인 시 에이전트를 다시 실행하도록 OS별 시작 항목을 등록
 - **GitHub 자동 업데이트**: 시작 시와 6시간마다 `name0825/dmw` 최신 안정 릴리스를 SHA256 검증 후 확인
 - **API Key 인증**: 에이전트 간 통신 보안 (bcrypt 기반 키 힌트 최적화)
+- **OS별 에이전트**: Unix 계열과 Windows에서 CPU / 메모리 / 디스크 메트릭 수집 지원
 
 ### 상태 모니터링
 - **WOL 매직 패킷 전송**: 포트 9 브로드캐스트
@@ -34,8 +35,9 @@ DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LA
   - ONLINE: 마지막 heartbeat 10 초 이내
   - OFFLINE: 30 초 이상 heartbeat 미보내
   - WAKE_TIMEOUT: WOL 후 3 분 이내 상태 변경 없음
-- **CPU / 메모리 / 디스크 사용량**: 10 초 간격 수집, 7 일간 이력 보존
-- **WebSocket 실시간 전달**: JWT 인증(서브프로토콜로 액세스 토큰 전달) 후 클라이언트 자동 업데이트 (`PORT + 1` 에서 리슨)
+- **CPU / 메모리 / 디스크 사용량**: 10 초 간격 수집, 7 일간 이력 보존 및 자동 정리
+- **상태 이력 그래프**: 디바이스별 최근 CPU / 메모리 / 디스크 추이를 웹 UI에서 확인
+- **WebSocket 실시간 전달**: JWT 인증(서브프로토콜로 액세스 토큰 전달) 후 클라이언트 자동 업데이트 (`PORT + 1` 에서 리슨, Docker 기본값 `3002`)
 - **WOL 브로드캐스트 주소 지정**: `WOL_BROADCAST_ADDRESS` 미설정 시 대상 IP 의 /24 로 유도
 
 ### 알림 시스템
@@ -45,6 +47,8 @@ DMW 는 로컬 네트워크 내 장치를 웹 UI 에서 관리하고, Wake-on-LA
   - 디스크: 90% 초과 → warning
 - **5 분 쿨다운**: 스팸 알림 방지
 - **Discord/Slack 웹훅**: 선택 사항 (미설정이어도 DB 기록은 남음)
+- **오프라인 전환 알림**: `ONLINE` 또는 `WAKE_TIMEOUT`에서 `OFFLINE`으로 바뀌는 순간 한 번만 기록·전송
+- **Telegram 알림**: `TELEGRAM_BOT_TOKEN`과 `TELEGRAM_CHAT_ID`를 모두 설정하면 웹훅과 독립적으로 전송
 
 ## 📦 기술적 특징
 
@@ -84,7 +88,7 @@ DMW/
 │   │   │   ├── agent.ts       # 에이전트 페어링/heartbeat 처리
 │   │   │   ├── devices.ts     # 기기 CRUD
 │   │   │   ├── monitoring.ts  # 상태 업데이트 + 경보 모니터링 스케줄러
-│   │   │   ├── notifications.ts # Discord/Slack 웹훅 발송
+│   │   │   ├── notifications.ts # Discord/Slack 웹훅 및 Telegram 발송
 │   │   │   ├── pairing.ts     # 페어링 코드 발급
 │   │   │   ├── wake.ts        # WOL 매직 패킷 전송
 │   │   │   └── ws.ts          # WebSocket 클라이언트 관리 + 브로드캐스트
@@ -141,6 +145,8 @@ DMW/
 ```bash
 npm install
 ```
+
+운영 모드(`start.sh prod`, `start.ps1 prod`, `start.cmd prod`)는 `server/.env`를 준비한 뒤 `npm ci`로 잠금 파일 기준 의존성을 설치하고 빌드합니다.
 
 ### 2️⃣ 환경 변수 준비
 
@@ -205,6 +211,19 @@ ALERT_MEMORY_THRESHOLD=80 # 메모리 임계치 (초과 시 warning 경보)
 ALERT_DISK_THRESHOLD=90   # 디스크 임계치 (초과 시 warning 경보)
 ```
 
+Telegram 알림을 사용하려면 BotFather에서 발급한 봇 토큰과 알림을 받을 채팅 ID를 둘 다 설정합니다. 둘 중 하나라도 비어 있으면 Telegram 전송은 시도하지 않습니다.
+
+```dotenv
+TELEGRAM_BOT_TOKEN=123456789:replace-with-bot-token
+TELEGRAM_CHAT_ID=-1001234567890
+```
+
+프로젝트 루트의 `.env`에 값을 넣으면 Docker Compose가 두 값을 서버 컨테이너로 전달합니다.
+
+```bash
+docker compose up --build
+```
+
 ## 📊 데이터 모델
 
 | 테이블 | 설명 | 주요 필드 |
@@ -229,12 +248,12 @@ ALERT_DISK_THRESHOLD=90   # 디스크 임계치 (초과 시 warning 경보)
 ## 📈 향후 계획 (Roadmap)
 
 ### P1 (선택 목표)
-- [ ] Windows 등 추가 OS 용 에이전트 공식 지원
-- [ ] 상태 이력 그래프 (7 일 보존 + 자동 삭제)
-- [ ] Discord/Telegram Webhook 연동
-- [ ] SSH 를 통한 원격 명령 실행
+- [x] Windows 등 추가 OS 용 에이전트 공식 지원
+- [x] 상태 이력 그래프 (7 일 보존 + 자동 삭제)
+- [x] Discord/Slack 웹훅 및 Telegram 알림 연동
 
 ### P2 (향후)
+- [ ] SSH 를 통한 원격 명령 실행 (보류)
 - [ ] 다중 사용자/역할 기반 권한 관리
 - [ ] 모바일 앱 (React Native)
 - [ ] Docker Hub 공식 이미지 배포

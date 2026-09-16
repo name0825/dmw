@@ -15,6 +15,8 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEB_DEV_PORT:-5173},http://127.0.0.1:${WEB_DEV_PORT:-5173}}
+      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+      TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
     ports:
       - "${SERVER_PORT:-3001}:3001"
       - "${WS_PORT:-3002}:3002"

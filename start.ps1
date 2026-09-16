@@ -22,8 +22,10 @@ elseif ($env -eq 'prod') {
     }
 
     Write-Host 'Building DMW for production...'
-    npm install --ignore-scripts
+    npm ci
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
     npm run build
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
     Write-Host 'Starting DMW backend...'
     Start-Process powershell -ArgumentList '-NoExit', '-Command', "cd `"$root`"; npm --workspace server run start"
