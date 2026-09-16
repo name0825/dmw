@@ -1,7 +1,7 @@
 FROM node:20-alpine AS build
 WORKDIR /app
 ARG VITE_API_BASE=http://localhost:3001
-ARG VITE_WS_BASE=ws://localhost:3001
+ARG VITE_WS_BASE=ws://localhost:3002
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_WS_BASE=$VITE_WS_BASE
 COPY package*.json ./

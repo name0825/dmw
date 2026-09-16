@@ -1,10 +1,14 @@
 import type { AlertItem, Device, DeviceHistoryEntry } from './types'
 
-export const getApiBaseUrl = () => (import.meta.env.VITE_API_BASE || 'http://localhost:3001').replace(/\/$/, '')
+export const getApiBaseUrl = () => (
+  import.meta.env.VITE_API_BASE || `http://localhost:${import.meta.env.VITE_DEFAULT_SERVER_PORT}`
+).replace(/\/$/, '')
 
 export const getWebSocketBaseUrl = () => (
   import.meta.env.VITE_WS_BASE ||
-  `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}`
+  (window.location.protocol === 'https:'
+    ? `wss://${window.location.host}`
+    : `ws://${window.location.hostname}:${import.meta.env.VITE_DEFAULT_WS_PORT}`)
 ).replace(/\/$/, '')
 
 /**

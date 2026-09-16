@@ -14,12 +14,20 @@ export const requestJson = async (url, options = {}) => {
   })
 
   const text = await res.text()
-  const data = text ? JSON.parse(text) : {}
+  const parseFailed = Symbol('parseFailed')
+  let data
+  try {
+    data = text ? JSON.parse(text) : {}
+  } catch {
+    data = parseFailed
+  }
 
   if (!res.ok) {
-    const message = data.message || 'Request failed'
+    const message = (data !== parseFailed && data?.message) || 'Request failed'
     throw new HttpError(res.status, `${res.status}: ${message}`)
   }
+
+  if (data === parseFailed) throw new Error(`Invalid JSON response (${res.status})`)
 
   return data
 }
