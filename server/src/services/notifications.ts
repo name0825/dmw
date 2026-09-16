@@ -1,5 +1,5 @@
 /**
- * 알림 서비스 - Discord/Slack 웹훅을 통한 알림 전송
+ * 알림 서비스 - Discord/Slack 웹훅과 Telegram을 통한 알림 전송
  */
 
 import type { DeviceAlert } from '../alerts.js'
@@ -14,15 +14,19 @@ import { withTransaction } from '../database/index.js'
 export const notifyAlerts = async (alerts: DeviceAlert[]): Promise<void> => {
   if (!alerts.length) return
 
-  const discordWebhook = process.env.DISCORD_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL
-  if (!discordWebhook) return
+  const webhookUrl = process.env.DISCORD_WEBHOOK_URL || process.env.SLACK_WEBHOOK_URL
+  const telegramBotToken = process.env.TELEGRAM_BOT_TOKEN
+  const telegramChatId = process.env.TELEGRAM_CHAT_ID
+  if (!webhookUrl && !(telegramBotToken && telegramChatId)) return
 
   const message = alerts
-    .map((alert) => `${alert.metric.toUpperCase()} ${alert.value}% · ${alert.message}`)
+    .map((alert) => `${alert.metric === 'offline' ? 'OFFLINE' : `${alert.metric.toUpperCase()} ${alert.value}%`} · ${alert.message}`)
     .join('\n')
 
-  try {
-    const payload = discordWebhook.includes('discord')
+  const deliveries: Promise<void>[] = []
+
+  if (webhookUrl) {
+    const payload = webhookUrl.includes('discord')
       ? {
           username: 'DMW Alert',
           embeds: [{
@@ -35,15 +39,30 @@ export const notifyAlerts = async (alerts: DeviceAlert[]): Promise<void> => {
           text: `DMW Alert\n${message}`,
         }
 
-    await fetch(discordWebhook, {
+    deliveries.push(sendNotification(webhookUrl, payload))
+  }
+
+  if (telegramBotToken && telegramChatId) {
+    deliveries.push(sendNotification(
+      `https://api.telegram.org/bot${telegramBotToken}/sendMessage`,
+      { chat_id: telegramChatId, text: `DMW Alert\n${message}`.slice(0, 4096) },
+    ))
+  }
+
+  await Promise.all(deliveries)
+}
+
+const sendNotification = async (url: string, payload: object): Promise<void> => {
+  try {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     })
-  } catch (error) {
-    // 웹훅 실패는 주 모니터링 흐름을 방해하지 않도록 조용히 처리
-    console.error('[Notifications] Failed to send alert:', error)
+    if (!response.ok) throw new Error('Notification request failed')
+  } catch {
+    console.error('[Notifications] Failed to send alert')
   }
 }
 

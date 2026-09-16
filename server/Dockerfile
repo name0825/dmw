@@ -19,7 +19,7 @@ COPY --from=build /app/tsconfig.json ./tsconfig.json
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 USER appuser
-EXPOSE 3001
+EXPOSE 3001 3002
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://localhost:3001/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))" || exit 1
 CMD ["node", "dist/index.js"]

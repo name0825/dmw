@@ -2,6 +2,7 @@ import {
   DEFAULT_ALERT_CPU_THRESHOLD,
   DEFAULT_ALERT_MEMORY_THRESHOLD,
   DEFAULT_ALERT_DISK_THRESHOLD,
+  STATUS_OFFLINE,
 } from './config/constants.js'
 
 export type AlertLevel = 'info' | 'warning' | 'critical'
@@ -61,4 +62,17 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
   }
 
   return alerts
+}
+
+export function evaluateOfflineAlert(device: any, previousStatus: string): DeviceAlert[] {
+  if (previousStatus === STATUS_OFFLINE || device.status !== STATUS_OFFLINE) return []
+
+  return [{
+    deviceId: Number(device.id),
+    level: 'critical',
+    message: '디바이스가 오프라인 상태가 되었습니다.',
+    metric: 'offline',
+    value: 0,
+    createdAt: new Date().toISOString(),
+  }]
 }

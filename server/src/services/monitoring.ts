@@ -1,5 +1,5 @@
 import { getDb, withTransaction } from '../database/index.js'
-import { evaluateAlerts } from '../alerts.js'
+import { evaluateAlerts, evaluateOfflineAlert } from '../alerts.js'
 import { notifyAlerts, saveAlertsToDb } from './notifications.js'
 import { broadcastState } from './ws.js'
 import { evaluateDeviceStatus } from '../deviceStatus.js'
@@ -39,28 +39,41 @@ export const pruneAlerts = async () => {
   })
 }
 
+export const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
+  const devices = await tx.all(
+    'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
+    [STATUS_ONLINE, STATUS_OFFLINE, STATUS_WAKE_TIMEOUT],
+  )
+  const transitions: Array<{ device: any; previousStatus: string }> = []
+
+  for (const device of devices) {
+    const nextStatus = evaluateDeviceStatus(device, now)
+    if (nextStatus !== device.status) {
+      await tx.run(
+        'UPDATE devices SET status = ?, updated_at = ? WHERE id = ?',
+        [nextStatus, now.toISOString(), device.id],
+      )
+      transitions.push({ device: { ...device, status: nextStatus }, previousStatus: device.status })
+    }
+  }
+
+  return transitions
+}
+
 /**
  * 기기 상태 업데이트 및 오프라인 상태 관리.
  * 백그라운드에서 주기적으로 실행되며, last_seen 와 updated_at 를 기반으로
  * 기기 상태를 평가하고 DB 에 갱신함.
  */
 export const updateOfflineStates = async () => {
-  const devices = await getDb().all(
-    'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
-    [STATUS_ONLINE, STATUS_OFFLINE, STATUS_WAKE_TIMEOUT],
+  const transitions = await withTransaction((tx) => updateDeviceStatuses(tx))
+  const offlineAlerts = transitions.flatMap(({ device, previousStatus }) =>
+    evaluateOfflineAlert(device, previousStatus),
   )
-
-  await withTransaction(async (tx) => {
-    for (const device of devices) {
-      const nextStatus = evaluateDeviceStatus(device, new Date())
-      if (nextStatus !== device.status) {
-        await tx.run(
-          'UPDATE devices SET status = ?, updated_at = ? WHERE id = ?',
-          [nextStatus, new Date().toISOString(), device.id],
-        )
-      }
-    }
-  })
+  if (offlineAlerts.length) {
+    await saveAlertsToDb(offlineAlerts)
+    await notifyAlerts(offlineAlerts)
+  }
 
   // 이력·알림 정리는 10 초마다 도는 이 루프에서 매번 DELETE 를 실행하지 않도록
   // 하루에 한 번 정도만 실행되게 스로틀함 (routes.ts 에 별도 스케줄러를 둘 수 없어 여기서 처리).

@@ -10,6 +10,43 @@ import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
 
 let wss: WebSocketServer | undefined;
 
+type WebSocketClient = {
+  protocol: string
+  readyState: number
+  send: (payload: string) => void
+  close: (code: number, reason: string) => void
+}
+
+export const selectWebSocketProtocol = (
+  protocols: Iterable<string>,
+  validate: (token: string) => boolean = isValidJwtToken,
+): string | false => [...protocols].find((protocol) => validate(protocol)) || false
+
+export const authorizeWebSocketProtocols = async (
+  protocols: Iterable<string>,
+  verify: typeof verifyTokenAndVersion = verifyTokenAndVersion,
+  validate: (token: string) => boolean = isValidJwtToken,
+): Promise<boolean> => {
+  const selectedToken = selectWebSocketProtocol(protocols, validate)
+  return selectedToken !== false && await verify(selectedToken) !== null
+}
+
+export const sendStateToClient = async (
+  client: WebSocketClient,
+  payload: string,
+  verify: typeof verifyTokenAndVersion = verifyTokenAndVersion,
+): Promise<void> => {
+  if (client.readyState !== WebSocket.OPEN) return
+
+  const user = await verify(client.protocol)
+  if (!user) {
+    client.close(1008, 'Unauthorized')
+    return
+  }
+
+  if (client.readyState === WebSocket.OPEN) client.send(payload)
+}
+
 /**
  * Broadcasts the current device list to all connected WebSocket clients
  * Uses async/await pattern for proper error and stack trace handling
@@ -26,11 +63,7 @@ export const broadcastState = async () => {
 
   if (wss && wss.clients.size > 0) {
     const payload = JSON.stringify({ type: 'devices-updated', devices })
-    wss.clients.forEach((client: any) => {
-      if (client.readyState === 1) { // 1 is OPEN
-        client.send(payload)
-      }
-    })
+    await Promise.all([...wss.clients].map((client) => sendStateToClient(client, payload)))
   }
 
   return { message: 'State broadcast initiated', deviceCount: devices.length }
@@ -51,9 +84,8 @@ export const setupWebSocket = () => {
       const protocolHeader = info.req.headers['sec-websocket-protocol'] || ''
       const tokens = protocolHeader.split(',').map((value) => value.trim()).filter(Boolean)
 
-      Promise.all(tokens.map((token) => verifyTokenAndVersion(token)))
-        .then((users) => {
-          const isAuthorized = users.some((user) => user !== null)
+      authorizeWebSocketProtocols(tokens)
+        .then((isAuthorized) => {
           if (!isAuthorized) {
             callback(false, 401, 'Unauthorized')
             return
@@ -65,8 +97,7 @@ export const setupWebSocket = () => {
     // 서명·만료만 검증해 프로토콜 문자열을 고른다 (동기 함수라 token_version
     // 조회 불가). 실질적인 인가 판정은 위 verifyClient 가 책임진다.
     handleProtocols: (protocols) => {
-      const validProtocol = [...protocols].find((protocol) => isValidJwtToken(protocol))
-      return validProtocol || false
+      return selectWebSocketProtocol(protocols)
     },
   });
   wss = server;
