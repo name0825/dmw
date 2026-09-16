@@ -29,7 +29,7 @@ if [ "$ENV" = "prod" ]; then
         exit 1
     fi
 
-    npm install --ignore-scripts
+    npm ci
     npm run build
 
     npm --workspace server run start &

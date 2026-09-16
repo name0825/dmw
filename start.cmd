@@ -22,8 +22,10 @@ if "%ENV%"=="prod" (
     echo server/.env not found. Copy server/.env.production.example to server/.env first.
     exit /b 1
   )
-  call npm install --ignore-scripts
+  call npm ci
+  if errorlevel 1 exit /b 1
   call npm run build
+  if errorlevel 1 exit /b 1
   start "DMW Backend (Prod)" cmd /k "cd /d "%~dp0" && npm --workspace server run start"
   timeout /t 2 /nobreak >nul
   start "DMW Frontend (Prod)" cmd /k "cd /d "%~dp0" && npm --workspace web run preview -- --host 0.0.0.0 --port 4173"
