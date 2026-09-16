@@ -35,11 +35,15 @@ export const initDb = async (db: Database): Promise<void> => {
       -- device_id 는 nullable 이다: 페어링 코드는 기기와 무관하게 먼저 발급되고,
       -- 에이전트가 코드를 소진하는 시점에 붙은 기기 id 가 기록된다 (감사 흔적).
       device_id INTEGER,
+      -- target_device_id 는 발급 시점에 특정 기기로 지정된 코드에만 채워진다.
+      -- 지정 없이 발급된 코드(신규 기기용)는 NULL 로 남는다.
+      target_device_id INTEGER,
       code TEXT NOT NULL,
       expires_at TEXT NOT NULL,
       used_at TEXT,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE,
+      FOREIGN KEY(target_device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
 
     CREATE TABLE IF NOT EXISTS device_metrics_latest (
@@ -122,6 +126,12 @@ const migrateSchema = async (db: Database): Promise<void> => {
   // 순서 주의: 테이블을 재생성하면 인덱스도 함께 사라지므로,
   // 유니크 인덱스 보장은 재생성 이후에 수행해야 한다.
   await ensurePairingCodesDeviceIdNullable(db)
+
+  const pairingColumns = await db.all<{ name: string }[]>('PRAGMA table_info(pairing_codes)')
+  if (!pairingColumns.some((column) => column.name === 'target_device_id')) {
+    await db.exec('ALTER TABLE pairing_codes ADD COLUMN target_device_id INTEGER REFERENCES devices(id) ON DELETE CASCADE')
+  }
+
   await ensurePairingCodeUniqueIndex(db)
   await ensureDevicesMacAddressUniqueIndex(db)
 }

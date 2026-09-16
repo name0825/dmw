@@ -4,7 +4,7 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 
-import { APP_ENV, CORS_ORIGIN, PORT, validateRuntimeConfig } from './config.js'
+import { APP_ENV, CORS_ORIGIN, PORT, WEB_DEV_PORT, validateRuntimeConfig } from './config.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware } from './middleware/auth.js'
 import { isPublicRoute } from './auth.js'
@@ -17,7 +17,9 @@ await app.register(cookie)
 await app.register(cors, {
   origin: (origin, callback) => {
     const allowedOrigins = new Set(
-      APP_ENV === 'production' ? CORS_ORIGIN : [...CORS_ORIGIN, 'http://localhost:5173', 'http://127.0.0.1:5173'],
+      APP_ENV === 'production'
+        ? CORS_ORIGIN
+        : [...CORS_ORIGIN, `http://localhost:${WEB_DEV_PORT}`, `http://127.0.0.1:${WEB_DEV_PORT}`],
     )
     const isAllowed = !origin || allowedOrigins.has(origin)
     callback(null, isAllowed)

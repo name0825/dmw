@@ -37,4 +37,5 @@ export type AlertItem = {
 export type PairingInfo = {
   code: string
   expiresAt: string
+  targetDeviceName?: string
 }

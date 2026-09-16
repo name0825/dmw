@@ -230,7 +230,7 @@ docker compose up --build
 |--------|------|----------|
 | `users` | 관리자 계정 | `email` (UNIQUE), `password_hash` (bcrypt), `role` |
 | `devices` | 관리 대상 기기 | `mac_address`, `ip_address`, `agent_key_hash`, `agent_paired`, `status` |
-| `pairing_codes` | 일회용 페어링 코드 (기기와 무관하게 발급) | `code` (8 자 16 진수), `expires_at` (10 분), `used_at`, `device_id` (nullable, 소진 시 기록되는 감사 필드) |
+| `pairing_codes` | 일회용 페어링 코드 (기기 무지정 또는 특정 기기 지정 발급) | `code` (8 자 16 진수), `expires_at` (10 분), `used_at`, `target_device_id` (nullable, 발급 시 지정된 기기), `device_id` (nullable, 소진 시 기록되는 감사 필드) |
 | `device_metrics_latest` | 최신 상태 데이터 | `cpu_usage`, `memory_usage`, `disk_usage` |
 | `device_metrics_history` | 상태 이력 데이터 (heartbeat 마다 기록, 7 일 보존) | `device_id`, `timestamp`, `cpu_usage`, `memory_usage`, `disk_usage` |
 | `refresh_tokens` | 리프레시 토큰 | `token_hash` (bcrypt), `lookup_id` (16 자 힌트), `revoked` |

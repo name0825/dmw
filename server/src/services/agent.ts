@@ -19,6 +19,12 @@ export const API_KEY_HINT_LEN = 12
 // 용도로만 쓴다 (500 으로 새어 나가지 않도록 바깥에서 별도로 잡는다).
 class InvalidPairingCodeError extends Error {}
 
+// handlePair 내부에서만 쓰는 신호용 에러. 코드가 특정 기기에 묶여 있는데 요청의
+// MAC 이 그 기기와 다르거나, 기기 미지정 코드로 이미 페어링된 기기를 재페어링
+// 하려는 경우에 던진다. 409 로 매핑되며, withTransaction 이 롤백하게 만들어
+// 코드가 소진되지 않도록 한다.
+class PairingCodeDeviceMismatchError extends Error {}
+
 /**
  * Extracts an API key from a Bearer authorization header
  * @param authHeader - The raw Authorization header value
@@ -69,8 +75,11 @@ export const extractHeartbeatMetrics = (body: any) => {
 
 /**
  * Handles the agent pairing process.
- * 코드는 기기와 무관하게 발급되어 있으므로, 검증에 성공한 이 시점에 에이전트가
- * 보고한 MAC/IP 로 기기 행을 만들거나(신규) 같은 MAC 의 기존 행을 재사용한다.
+ * 코드가 특정 기기로 지정되어 발급되었다면 그 기기의 MAC 과 요청의 MAC 이 일치할
+ * 때만 재페어링을 허용한다. 기기 미지정 코드라면 검증에 성공한 이 시점에 에이전트가
+ * 보고한 MAC/IP 로 기기 행을 만들거나(신규), 아직 페어링되지 않은 같은 MAC 의
+ * 기존 행을 재사용한다 — 이미 페어링된 기기는 그 기기로 지정된 코드로만
+ * 재페어링할 수 있다.
  * @param request - Fastify request
  * @param reply - Fastify reply
  * @returns Promise<void>
@@ -119,24 +128,20 @@ export const handlePair = async (request: any, reply: any) => {
         // 여기서 별도 SELECT 를 추가하되, 그 결과로 응답을 바꾸지는 않는다.
         throw new InvalidPairingCodeError()
       }
-      const pairing = await tx.get('SELECT id FROM pairing_codes WHERE code = ?', [pairingCode])
-
-      // 같은 MAC 이면 기존 행을 재사용한다. 에이전트 재설치·재페어링 때
-      // 같은 물리 기기가 중복 등록되는 것을 막는다.
-      // mac_address 에는 UNIQUE 인덱스가 있지만, 중복이 이미 남아있던 구 DB 에서는
-      // 인덱스 생성이 건너뛰어질 수 있다(database/schema.ts 참고). ORDER BY id ASC
-      // LIMIT 1 로 항상 가장 오래된 행을 결정적으로 채택해, 그런 DB 에서도 어느 행이
-      // 뽑힐지가 조회마다 달라지지 않게 한다.
-      const existing = await tx.get(
-        'SELECT id FROM devices WHERE mac_address = ? ORDER BY id ASC LIMIT 1',
-        [normalizedMac]
-      )
+      const pairing = await tx.get('SELECT id, target_device_id FROM pairing_codes WHERE code = ?', [pairingCode])
 
       // Not yet ONLINE: the device has only just received its key and has
       // not sent a heartbeat yet.
       let id: number
-      if (existing) {
-        id = existing.id
+      if (pairing.target_device_id !== null && pairing.target_device_id !== undefined) {
+        // 특정 기기로 지정된 코드다. id 로 정확히 한 행만 골라내므로, 같은 MAC 을
+        // 공유하는 중복 행이 남아있는 구 DB 에서도 모호함이 없다(신규 기기용
+        // 분기와 달리 mac_address 로 조회하지 않는다).
+        const targetDevice = await tx.get('SELECT id, mac_address FROM devices WHERE id = ?', [pairing.target_device_id])
+        if (!targetDevice || targetDevice.mac_address !== normalizedMac) {
+          throw new PairingCodeDeviceMismatchError('Pairing code is bound to a different device')
+        }
+        id = targetDevice.id
         // name 은 요청에 명시된 경우에만 갱신한다 — 관리자가 웹에서 바꿔 둔
         // 이름을 재페어링이 덮어쓰면 안 된다.
         await tx.run(
@@ -144,12 +149,46 @@ export const handlePair = async (request: any, reply: any) => {
           [name || null, agentKeyHash, agentKeyHint, now, normalizedIp, STATUS_OFFLINE, now, id]
         )
       } else {
-        const deviceName = name || `Agent-${normalizedMac.replace(/:/g, '').slice(-6)}`
-        const insertResult = await tx.run(
-          'INSERT INTO devices (name, mac_address, ip_address, agent_key_hash, agent_key_hint, agent_paired, paired_at, status, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)',
-          [deviceName, normalizedMac, normalizedIp, agentKeyHash, agentKeyHint, now, STATUS_OFFLINE, now]
+        // 기기 미지정(신규 기기용) 코드다. 같은 MAC 의 기존 행이 이미 페어링되어
+        // 있다면 재페어링은 그 기기 앞으로 발급된 코드로만 허용된다 — 그렇지 않으면
+        // 아무 신규 기기용 코드로도 이미 페어링된 기기를 가로챌 수 있게 된다.
+        // 아직 페어링되지 않은 행(웹에서 수동 등록했거나 이전에 unpair 된 경우)은
+        // 그대로 채택한다.
+        // mac_address 에는 UNIQUE 인덱스가 있지만, 중복이 이미 남아있던 구 DB 에서는
+        // 인덱스 생성이 건너뛰어질 수 있다(database/schema.ts 참고). 그런 DB 에서는
+        // 같은 MAC 의 행이 여러 개일 수 있으므로, "이미 페어링됨" 판정은 그 중
+        // 채택 대상이 될 행 하나만 보지 않고 같은 MAC 을 가진 모든 행을 확인한다 —
+        // 그렇지 않으면 페어링된 행 옆의 미페어링 중복 행을 골라 우회할 수 있다.
+        const pairedConflict = await tx.get(
+          'SELECT id FROM devices WHERE mac_address = ? AND agent_paired = 1 LIMIT 1',
+          [normalizedMac]
         )
-        id = insertResult.lastID
+        if (pairedConflict) {
+          throw new PairingCodeDeviceMismatchError('Device is already paired; issue a pairing code from that device\'s entry to re-pair')
+        }
+
+        // 이 시점에는 같은 MAC 의 모든 행이 미페어링 상태임이 보장된다.
+        // ORDER BY id ASC LIMIT 1 로 항상 가장 오래된 행을 결정적으로 채택해,
+        // 중복이 남아있는 DB 에서도 어느 행이 뽑힐지가 조회마다 달라지지 않게 한다.
+        const existing = await tx.get(
+          'SELECT id FROM devices WHERE mac_address = ? ORDER BY id ASC LIMIT 1',
+          [normalizedMac]
+        )
+
+        if (existing) {
+          id = existing.id
+          await tx.run(
+            'UPDATE devices SET name = COALESCE(?, name), agent_key_hash = ?, agent_key_hint = ?, agent_paired = 1, paired_at = ?, ip_address = ?, status = ?, updated_at = ? WHERE id = ?',
+            [name || null, agentKeyHash, agentKeyHint, now, normalizedIp, STATUS_OFFLINE, now, id]
+          )
+        } else {
+          const deviceName = name || `Agent-${normalizedMac.replace(/:/g, '').slice(-6)}`
+          const insertResult = await tx.run(
+            'INSERT INTO devices (name, mac_address, ip_address, agent_key_hash, agent_key_hint, agent_paired, paired_at, status, updated_at) VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?)',
+            [deviceName, normalizedMac, normalizedIp, agentKeyHash, agentKeyHint, now, STATUS_OFFLINE, now]
+          )
+          id = insertResult.lastID
+        }
       }
 
       // 어떤 코드로 어떤 기기가 붙었는지 감사 흔적을 남긴다.
@@ -172,6 +211,11 @@ export const handlePair = async (request: any, reply: any) => {
     if (error instanceof InvalidPairingCodeError) {
       console.warn('Pairing attempt with invalid, already-used, or expired code')
       reply.code(401).send({ message: 'Invalid pairing code' })
+      return
+    }
+    if (error instanceof PairingCodeDeviceMismatchError) {
+      console.warn('Pairing attempt with a code not valid for the reported device')
+      reply.code(409).send({ message: error.message })
       return
     }
     console.error('Error during agent pairing:', error)

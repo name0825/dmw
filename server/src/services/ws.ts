@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
-import { PORT } from '../config.js'
+import { WS_PORT } from '../config.js'
 import { getDb } from '../database/index.js'
 import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
 
@@ -70,13 +70,13 @@ export const broadcastState = async () => {
 }
 
 /**
- * Starts the WebSocket server on PORT + 1.
+ * Starts the WebSocket server on WS_PORT.
  * 이 서버는 Fastify 와 포트를 공유하지 않는 독립 리스너이므로 app 인스턴스가 필요 없다.
  */
 export const setupWebSocket = () => {
   // Initialize WebSocket server
   const server = new WebSocketServer({
-    port: PORT + 1,
+    port: WS_PORT,
     // 실제 인가 판정(서명 + token_version)은 여기서 내린다. handleProtocols 는
     // 동기 함수라 DB 조회가 불가능하므로 서명 검증만 하는 사전 필터일 뿐이며,
     // handleProtocols 를 통과했더라도 여기서 거절되면 연결은 성립하지 않는다.

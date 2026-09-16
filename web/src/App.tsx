@@ -273,6 +273,31 @@ export default function App() {
   }
 
   /**
+   * Issue a pairing code bound to an already-registered device, for re-pairing.
+   * @param {Device} device - Device to bind the pairing code to.
+   */
+  const generateRepairingCode = async (device: Device) => {
+    if (!token) {
+      setMessage('먼저 로그인해야 합니다.')
+      return
+    }
+
+    const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ deviceId: device.id }),
+    })
+
+    if (!res.ok) {
+      setMessage(data?.message || '페어링 코드 발급 실패')
+      return
+    }
+
+    setPairingInfo({ code: data.code, expiresAt: data.expiresAt, targetDeviceName: device.name })
+    setMessage('페어링 코드가 발급되었습니다.')
+  }
+
+  /**
    * Copy the currently issued pairing code to the clipboard.
    */
   const copyPairingCode = async () => {
@@ -361,7 +386,11 @@ export default function App() {
   const wakeDevice = async (id: number) => {
     const { res, data } = await authedRequest(`${apiBase}/devices/${id}/wake`, { method: 'POST' })
 
-    setMessage(data?.message || 'Wake 요청 전송')
+    if (res.ok && data?.agentPaired === false) {
+      setMessage('WOL 신호는 보냈지만 Agent가 설치/페어링되지 않아 전원 상태를 확인할 수 없습니다.')
+    } else {
+      setMessage(data?.message || 'Wake 요청 전송')
+    }
     if (res.ok) {
       await loadDevices()
     }
@@ -495,6 +524,7 @@ export default function App() {
             {pairingInfo && (
               <div className="pairing-box">
                 <strong>발급된 페어링 코드</strong>
+                {pairingInfo.targetDeviceName && <small>대상 디바이스: {pairingInfo.targetDeviceName}</small>}
                 <div className="pairing-code">{pairingInfo.code}</div>
                 <small>유효시간: {new Date(pairingInfo.expiresAt).toLocaleString()}</small>
                 <small>서버 주소: {apiBase}</small>
@@ -573,6 +603,9 @@ export default function App() {
                       <button className="secondary" onClick={() => deleteDevice(device.id)}>삭제</button>
                       <button onClick={() => wakeDevice(device.id)}>Wake</button>
                       <button className="secondary" onClick={() => loadHistory(device.id)}>History</button>
+                      {device.agent_paired && (
+                        <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>
+                      )}
                     </div>
                     {historyByDevice[device.id]?.length ? (
                       <div className="history-panel">
