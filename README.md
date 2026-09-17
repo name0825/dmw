@@ -167,6 +167,9 @@ copy server\.env.example server\.env
 > **운영 환경**: 반드시 강력한 `JWT_SECRET` 과 `ADMIN_PASSWORD` 로 교체 후 실행하세요.  
 > `validateRuntimeConfig()` 가 production 모드에서 미설정/기본값인 경우 에러를 던집니다.
 
+> **다른 기기에서 대시보드 접속**: 웹은 접속한 주소의 호스트명으로 API/WS에 연결하지만, 서버는 `CORS_ORIGIN` 에 등록된 Origin만 허용합니다.  
+> LAN의 다른 PC·휴대폰에서 쓰려면 실제 접속 주소를 추가하세요. 예: `CORS_ORIGIN=http://localhost:5173,http://192.168.0.10:5173`
+
 ### 3️⃣ 로컬 실행
 
 ```bash

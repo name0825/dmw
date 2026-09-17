@@ -1,7 +1,8 @@
 import type { AlertItem, Device, DeviceHistoryEntry } from './types'
 
 export const getApiBaseUrl = () => (
-  import.meta.env.VITE_API_BASE || `http://localhost:${import.meta.env.VITE_DEFAULT_SERVER_PORT}`
+  import.meta.env.VITE_API_BASE ||
+  `${window.location.protocol}//${window.location.hostname}:${import.meta.env.VITE_DEFAULT_SERVER_PORT}`
 ).replace(/\/$/, '')
 
 export const getWebSocketBaseUrl = () => (
