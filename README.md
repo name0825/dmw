@@ -107,7 +107,11 @@ DMW/
 │   │   ├── main.tsx            # 앱 진입점
 │   │   ├── styles.css          # 스타일
 │   │   ├── types.ts            # TypeScript 타입
-│   │   └── vite-env.d.ts       # Vite 환경 타입 선언
+│   │   ├── vite-env.d.ts       # Vite 환경 타입 선언
+│   │   └── hooks/               # 커스텀 React 훅
+│   │       ├── useAuth.ts       # 인증 상태/토큰 관리
+│   │       ├── useDeviceSocket.ts # WebSocket 연결 및 기기 상태 구독
+│   │       └── useDevices.ts    # 기기 목록 조회/조작
 │   ├── Dockerfile
 │   ├── nginx.conf              # 프론트엔드 역프록시 설정
 │   ├── vite.config.ts
@@ -127,6 +131,9 @@ DMW/
 │   ├── scripts/build-release.js # 릴리스 JSON/SHA256 생성
 │   ├── package.json
 │   └── README.md
+├── .github/
+│   └── workflows/
+│       └── ci.yml              # CI 워크플로우
 ├── docker-compose.yml          # 서버 + 프론트엔드 컨테이너 오케스트레이션
 ├── start.sh                   # 통합 스타트업 스크립트 (Linux/macOS): start.sh [dev|prod|agent]
 ├── start.ps1                  # 통합 스타트업 스크립트 (Windows PowerShell): .\start.ps1 [dev|prod|agent]
@@ -214,6 +221,21 @@ docker-compose up
 컨테이너 재시작 후에도 데이터는 `dmw_data` 볼륨으로 영속화됩니다.
 
 > **WOL 참고**: `server` 서비스는 기본 브리지 네트워크로 실행되므로 UDP 매직 패킷이 물리 LAN으로 브로드캐스트되지 않을 수 있습니다. Linux에서는 `docker-compose.yml`의 `server` 서비스에 `network_mode: host`를 추가하면 해결되지만(이 경우 `ports`와 `server` 서비스명을 통한 접근이 무효화되어 `web`의 nginx 프록시 설정도 함께 조정해야 합니다), Docker Desktop(Windows/macOS)에서는 호스트 네트워크 모드가 지원되지 않아 이 방법을 사용할 수 없습니다.
+
+### HTTPS
+
+웹 컨테이너는 같은 빌드로 http/https 를 모두 지원합니다. `certs/` 에 `fullchain.pem`, `privkey.pem` 을 두고 아래처럼 실행하세요.
+
+```bash
+mkdir -p certs
+openssl req -x509 -nodes -newkey rsa:2048 -days 365 \
+  -keyout certs/privkey.pem -out certs/fullchain.pem \
+  -subj "/CN=localhost"
+
+docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
+```
+
+`WEB_DEV_PORT`(기본 5173)로 http, `WEB_HTTPS_PORT`(기본 8443)로 https 접속이 동시에 가능합니다.
 
 ### 모니터링 및 경보 환경 변수
 

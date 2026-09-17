@@ -16,6 +16,8 @@ RUN npm run build
 FROM nginx:1.27-alpine
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx/dmw-locations.conf /etc/nginx/snippets/dmw-locations.conf
+RUN mkdir -p /etc/nginx/conf.d/https
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
     chmod -R 755 /usr/share/nginx/html
 USER nginx

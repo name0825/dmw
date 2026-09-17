@@ -36,18 +36,29 @@ const wsPort = Number(process.env.WS_PORT || dmwConf.WS_PORT || serverPort + 1)
 const devPort = Number(process.env.WEB_DEV_PORT || dmwConf.WEB_DEV_PORT || 5173)
 const previewPort = Number(process.env.WEB_PREVIEW_PORT || dmwConf.WEB_PREVIEW_PORT || 4173)
 
+const proxy = {
+  '/api': {
+    target: `http://localhost:${serverPort}`,
+    changeOrigin: true,
+    rewrite: (p: string) => p.replace(/^\/api/, ''),
+  },
+  '/ws': {
+    target: `ws://localhost:${wsPort}`,
+    ws: true,
+    rewrite: (p: string) => p.replace(/^\/ws/, ''),
+  },
+}
+
 export default defineConfig({
   plugins: [react()],
   server: {
     port: devPort,
     host: '0.0.0.0',
+    proxy,
   },
   preview: {
     port: previewPort,
     host: '0.0.0.0',
-  },
-  define: {
-    'import.meta.env.VITE_DEFAULT_SERVER_PORT': JSON.stringify(String(serverPort)),
-    'import.meta.env.VITE_DEFAULT_WS_PORT': JSON.stringify(String(wsPort)),
+    proxy,
   },
 })

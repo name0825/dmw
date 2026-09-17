@@ -5,6 +5,7 @@ data/
 web/dist
 agent/data/
 agent/release/
+certs/
 .env
 .env.*
 !.env.example

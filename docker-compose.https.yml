@@ -1,0 +1,9 @@
+version: "3.9"
+
+services:
+  web:
+    volumes:
+      - ./certs:/etc/nginx/certs:ro
+      - ./web/nginx/https.conf:/etc/nginx/conf.d/https/https.conf:ro
+    ports:
+      - "${WEB_HTTPS_PORT:-8443}:443"
