@@ -11,9 +11,9 @@ services:
       PORT: 3001
       WS_PORT: 3002
       NODE_ENV: production
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file at the project root before running docker compose}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in a .env file at the project root before running docker compose}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEB_DEV_PORT:-5173},http://127.0.0.1:${WEB_DEV_PORT:-5173}}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}

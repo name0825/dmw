@@ -200,11 +200,20 @@ npm run agent
 
 ### Docker Compose 로 실행
 
+프로젝트 루트에 `.env`를 만들고 `JWT_SECRET`, `ADMIN_PASSWORD`를 설정해야 합니다 (기본값 없이 필수 값으로 강제됨).
+
+```dotenv
+JWT_SECRET=<임의의 긴 랜덤 문자열>
+ADMIN_PASSWORD=<관리자 초기 비밀번호>
+```
+
 ```bash
 docker-compose up
 ```
 
 컨테이너 재시작 후에도 데이터는 `dmw_data` 볼륨으로 영속화됩니다.
+
+> **WOL 참고**: `server` 서비스는 기본 브리지 네트워크로 실행되므로 UDP 매직 패킷이 물리 LAN으로 브로드캐스트되지 않을 수 있습니다. Linux에서는 `docker-compose.yml`의 `server` 서비스에 `network_mode: host`를 추가하면 해결되지만(이 경우 `ports`와 `server` 서비스명을 통한 접근이 무효화되어 `web`의 nginx 프록시 설정도 함께 조정해야 합니다), Docker Desktop(Windows/macOS)에서는 호스트 네트워크 모드가 지원되지 않아 이 방법을 사용할 수 없습니다.
 
 ### 모니터링 및 경보 환경 변수
 
