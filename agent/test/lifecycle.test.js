@@ -384,7 +384,7 @@ test('running agent applies a replacement credential without restart', async () 
       result.writeHead(200, { 'Content-Type': 'application/json' })
       result.end(JSON.stringify({ status: 'ok' }))
     })
-    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
+    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state, DMW_STUB_METRICS: '1' }, stdio: 'ignore' })
     try {
       fs.writeFileSync(path.join(state, 'credentials.json'), JSON.stringify({ serverUrl: url, deviceId: 1, apiKey: 'initial-key' }))
       await new Promise((resolve, reject) => {

@@ -12,10 +12,8 @@ ENV NODE_ENV=production
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 COPY --from=build /app/package*.json ./
-COPY --from=build /app/node_modules ./node_modules
+RUN npm ci --omit=dev
 COPY --from=build /app/dist ./dist
-COPY --from=build /app/src ./src
-COPY --from=build /app/tsconfig.json ./tsconfig.json
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 USER appuser

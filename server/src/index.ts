@@ -11,7 +11,9 @@ import { isPublicRoute } from './auth.js'
 import { registerRoutes } from './routes.js'
 import { setupWebSocket, closeWebSocket } from './services/ws.js'
 
-const app = Fastify({ logger: false })
+const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1'
+
+const app = Fastify({ logger: false, trustProxy: TRUST_PROXY })
 
 await app.register(cookie)
 await app.register(cors, {

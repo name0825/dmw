@@ -60,7 +60,12 @@ export const acquireLock = (name) => {
     if (!Number.isInteger(pid) || pid <= 0) throw new Error(`${name} 잠금 파일을 확인하세요: ${file}`)
     try { process.kill(pid, 0); return null } catch (probe) {
       if (probe.code !== 'ESRCH') return null
-      fs.unlinkSync(file)
+      const reclaimed = `${file}.${process.pid}.stale`
+      try { fs.renameSync(file, reclaimed) } catch (renameError) {
+        if (renameError.code === 'ENOENT') return null
+        throw renameError
+      }
+      fs.unlinkSync(reclaimed)
       return acquireLock(name)
     }
   }

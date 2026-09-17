@@ -3,9 +3,7 @@ import { registerDeviceRoutes } from './routes/devices.js'
 import { registerAgentRoutes } from './routes/agent.js'
 import { registerPairingRoutes } from './routes/pairing.js'
 import { monitorAlerts, updateOfflineStates } from './services/monitoring.js'
-
-// 백그라운드 모니터링 주기 (10초)
-const MONITOR_INTERVAL_MS = 10 * 1000
+import { MONITOR_INTERVAL_MS } from './config/constants.js'
 
 /**
  * 모든 HTTP 라우트를 등록한다.
