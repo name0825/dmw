@@ -19,6 +19,17 @@ export const REFRESH_RATE_LIMIT_TIME_WINDOW = '1 minute'
 /** Default rate limit for agent pairing endpoints — 5 requests per minute. */
 export const AGENT_PAIR_RATE_LIMIT_MAX = 5
 
+/**
+ * Default rate limit for agent heartbeat endpoints — 120 requests per minute.
+ * Legitimate agents heartbeat at a minimum 1s interval (up to 60/min each), and
+ * several agents may share one IP behind NAT, so this allows headroom for at
+ * least 2 agents behind the same address while still bounding bcrypt-driven CPU cost.
+ */
+export const AGENT_HEARTBEAT_RATE_LIMIT_MAX = 120
+
+/** Default rate limit for agent unpair endpoints — 10 requests per minute. */
+export const AGENT_UNPAIR_RATE_LIMIT_MAX = 10
+
 /** Default rate limit for pairing code issuance — 10 requests per minute. */
 export const PAIRING_CODE_RATE_LIMIT_MAX = 10
 

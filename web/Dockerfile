@@ -14,14 +14,15 @@ COPY . .
 RUN npm run build
 
 FROM nginx:1.27-alpine
+ENV WEB_DEV_PORT=5173
 COPY --from=build /app/dist /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY nginx/dmw-locations.conf /etc/nginx/snippets/dmw-locations.conf
 RUN mkdir -p /etc/nginx/conf.d/https
-RUN chown -R nginx:nginx /usr/share/nginx/html && \
+RUN chown -R nginx:nginx /usr/share/nginx/html /etc/nginx/conf.d && \
     chmod -R 755 /usr/share/nginx/html
 USER nginx
-EXPOSE 80
+EXPOSE ${WEB_DEV_PORT}
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD wget -q --spider http://localhost/ || exit 1
+  CMD wget -q --spider http://localhost:${WEB_DEV_PORT}/ || exit 1
 CMD ["nginx", "-g", "daemon off;"]

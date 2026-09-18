@@ -43,6 +43,13 @@ export const WS_PORT = Number(process.env.WS_PORT || PORT + 1)
 export const WEB_DEV_PORT = Number(process.env.WEB_DEV_PORT || 5173)
 
 /**
+ * Host address the HTTP and WebSocket servers bind to.
+ * Defaults to '0.0.0.0'. Set to '127.0.0.1' when running under Docker with
+ * network_mode: host, so the server is only reachable via the host loopback.
+ */
+export const BIND_HOST = process.env.BIND_HOST || '0.0.0.0'
+
+/**
  * JWT secret key for token signing.
  * Must be configured via JWT_SECRET environment variable in production.
  * Defaults to 'dev-secret' in non-production environments.
@@ -95,21 +102,34 @@ export const WOL_BROADCAST_ADDRESS = process.env.WOL_BROADCAST_ADDRESS || ''
  * Safe to skip in development or test environments.
  * @throws {Error} If JWT_SECRET or ADMIN_PASSWORD is not properly configured in production
  */
+/** JWT_SECRET placeholder values used in server/.env.example and server/.env.production.example. */
+const PLACEHOLDER_JWT_SECRETS = ['dev-secret', 'change-me-in-production', 'replace-with-long-random-secret']
+
+/** ADMIN_PASSWORD placeholder values used in server/.env.example and server/.env.production.example. */
+const PLACEHOLDER_ADMIN_PASSWORDS = ['admin123', 'replace-with-strong-password']
+
+/** Minimum acceptable JWT_SECRET length in production. */
+const MIN_JWT_SECRET_LENGTH = 32
+
 export const validateRuntimeConfig = (): void => {
-  const runtimeEnv = process.env.NODE_ENV || APP_ENV
+  const runtimeEnv = (process.env.NODE_ENV || APP_ENV).trim().toLowerCase()
 
   if (runtimeEnv !== 'production') {
     return
   }
 
-  const runtimeJwtSecret = process.env.JWT_SECRET || JWT_SECRET
-  const runtimeAdminPassword = process.env.ADMIN_PASSWORD || ADMIN_PASSWORD
+  const runtimeJwtSecret = (process.env.JWT_SECRET || JWT_SECRET).trim()
+  const runtimeAdminPassword = (process.env.ADMIN_PASSWORD || ADMIN_PASSWORD).trim()
 
-  if (!runtimeJwtSecret || runtimeJwtSecret === 'dev-secret' || runtimeJwtSecret === 'change-me-in-production') {
+  if (!runtimeJwtSecret || PLACEHOLDER_JWT_SECRETS.includes(runtimeJwtSecret)) {
     throw new Error('JWT_SECRET must be set in production mode.')
   }
 
-  if (!runtimeAdminPassword || runtimeAdminPassword === 'admin123') {
+  if (runtimeJwtSecret.length < MIN_JWT_SECRET_LENGTH) {
+    throw new Error(`JWT_SECRET must be at least ${MIN_JWT_SECRET_LENGTH} characters in production mode.`)
+  }
+
+  if (!runtimeAdminPassword || PLACEHOLDER_ADMIN_PASSWORDS.includes(runtimeAdminPassword)) {
     throw new Error('ADMIN_PASSWORD must be set in production mode.')
   }
 

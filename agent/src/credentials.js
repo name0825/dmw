@@ -12,38 +12,44 @@ export const readState = (name) => {
 // fs `mode` has no effect on Windows; access is governed by the ACL inherited
 // from the parent directory. Restrict the credentials file to the current
 // user so other local accounts on a shared machine cannot read the API key.
-// icacls 실패는 무인 실행(서비스/예약 작업) 환경에서 console.warn만으로는 아무도
-// 보지 못하므로, 상태 디렉터리에도 흔적을 남긴다. 파일은 매번 덮어써서 쌓이지 않는다.
+// ACL 제한이 실패하면 비밀값을 담은 파일을 남기지 않도록 실패로 처리한다(fail closed).
 const restrictAclToCurrentUser = (filePath) => {
   const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME
-  if (!account) return
-  try {
-    execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${account}:F`], { stdio: 'ignore' })
-    try { fs.unlinkSync(path.join(getStateDir(), 'acl-warning.json')) } catch {}
-  } catch (error) {
-    console.warn(`[credentials] Windows ACL 제한 실패 (${filePath}): ${error.message}`)
-    try {
-      writeState('acl-warning.json', { timestamp: new Date().toISOString(), filePath, message: error.message })
-    } catch {}
-  }
+  if (!account) throw new Error('현재 사용자 계정을 확인할 수 없습니다.')
+  execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${account}:F`], { stdio: 'ignore' })
 }
 
 export const writeState = (name, value, { restrictToOwner = false } = {}) => {
   fs.mkdirSync(getStateDir(), { recursive: true })
   const target = path.join(getStateDir(), name)
   const temporary = `${target}.${process.pid}.tmp`
-  fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })
-  fs.renameSync(temporary, target)
-  if (restrictToOwner && process.platform === 'win32') restrictAclToCurrentUser(target)
+  const restrictFirst = restrictToOwner && process.platform === 'win32'
+  if (restrictFirst) {
+    fs.writeFileSync(temporary, '', { mode: 0o600 })
+    try {
+      restrictAclToCurrentUser(temporary)
+    } catch (error) {
+      try { fs.unlinkSync(temporary) } catch {}
+      throw new Error(`[credentials] Windows ACL 제한 실패 (${temporary}): ${error.message}`)
+    }
+  }
+  try {
+    fs.writeFileSync(temporary, JSON.stringify(value, null, 2), { mode: 0o600 })
+    fs.renameSync(temporary, target)
+  } catch (error) {
+    try { fs.unlinkSync(temporary) } catch {}
+    throw error
+  }
 }
 export const loadCredentials = () => {
   const data = readState('credentials.json')
   return data?.apiKey && data?.deviceId && data?.serverUrl ? data : null
 }
 export const saveCredentials = (credentials) => writeState('credentials.json', credentials, { restrictToOwner: true })
+// 지울 값에는 비밀이 없으므로 ACL 제한이 필요한 writeState 대신 파일을 바로 삭제한다.
 export const clearCredentials = (expected) => {
   if (expected && loadCredentials()?.apiKey !== expected.apiKey) return false
-  writeState('credentials.json', null, { restrictToOwner: true })
+  fs.rmSync(path.join(getStateDir(), 'credentials.json'), { force: true })
   return true
 }
 export const acquireLock = (name) => {

@@ -1,19 +1,25 @@
 FROM node:20-alpine AS build
 
 WORKDIR /app
-COPY package*.json ./
-RUN npm install
-COPY . .
-RUN npm run build
+COPY package.json package-lock.json ./
+COPY server/package.json server/package.json
+COPY web/package.json web/package.json
+COPY agent/package.json agent/package.json
+RUN npm ci -w server
+COPY server server
+RUN npm run build -w server
 
 FROM node:20-alpine
 WORKDIR /app
 ENV NODE_ENV=production
 
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
-COPY --from=build /app/package*.json ./
-RUN npm ci --omit=dev
-COPY --from=build /app/dist ./dist
+COPY --from=build /app/package.json /app/package-lock.json ./
+COPY --from=build /app/server/package.json server/package.json
+COPY --from=build /app/web/package.json web/package.json
+COPY --from=build /app/agent/package.json agent/package.json
+RUN npm ci -w server --omit=dev
+COPY --from=build /app/server/dist ./dist
 RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 USER appuser

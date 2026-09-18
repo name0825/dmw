@@ -176,16 +176,16 @@ Wake 요청 이후:
 
 | 우선순위 | 기능 | 설명 | 상태 |
 |---|---|---|---|
-| P0 | 사용자 인증 | 로그인, bcrypt 비밀번호 해싱, Access/Refresh Token 발급 및 검증 | 예정 |
-| P0 | 디바이스 등록/관리 | 이름, MAC, IP 등록·수정·삭제 | 예정 |
-| P0 | Agent 페어링 | 디바이스 등록 시 일회용 페어링 코드 발급, Agent 최초 연결 시 API Key 발급 | 예정 |
-| P0 | WOL 매직패킷 전송 | 등록된 디바이스에 UDP 매직 패킷 전송 | 예정 |
-| P0 | WOL 결과 판정 | 요청 후 최대 3분 동안 heartbeat/상태 변화 확인, 실패 시 경고 | 예정 |
-| P0 | Agent 인증 | Agent → Server 요청에 API Key 인증 적용 | 예정 |
-| P0 | Agent heartbeat | Agent가 10초마다 heartbeat 전송 | 예정 |
-| P0 | 리소스 모니터링 | CPU / MEM / Disk 사용량 수집 및 전송 | 예정 |
-| P0 | 온/오프라인 판정 | 마지막 heartbeat 기준 30초 미수신 시 OFFLINE | 예정 |
-| P0 | WebSocket 실시간 반영 | 서버가 최신 상태를 브라우저에 WebSocket으로 push | 예정 |
+| P0 | 사용자 인증 | 로그인, bcrypt 비밀번호 해싱, Access/Refresh Token 발급 및 검증 | 완료 |
+| P0 | 디바이스 등록/관리 | 이름, MAC, IP 등록·수정·삭제 | 완료 |
+| P0 | Agent 페어링 | 디바이스 등록 시 일회용 페어링 코드 발급, Agent 최초 연결 시 API Key 발급 | 완료 |
+| P0 | WOL 매직패킷 전송 | 등록된 디바이스에 UDP 매직 패킷 전송 | 완료 |
+| P0 | WOL 결과 판정 | 요청 후 최대 3분 동안 heartbeat/상태 변화 확인, 실패 시 경고 | 완료 |
+| P0 | Agent 인증 | Agent → Server 요청에 API Key 인증 적용 | 완료 |
+| P0 | Agent heartbeat | Agent가 10초마다 heartbeat 전송 | 완료 |
+| P0 | 리소스 모니터링 | CPU / MEM / Disk 사용량 수집 및 전송 | 완료 |
+| P0 | 온/오프라인 판정 | 마지막 heartbeat 기준 30초 미수신 시 OFFLINE | 완료 |
+| P0 | WebSocket 실시간 반영 | 서버가 최신 상태를 브라우저에 WebSocket으로 push | 완료 |
 | P1 | 추가 OS Agent | Windows 등 타 OS 지원 | 완료 |
 | P1 | 상태 이력 그래프 | 시간별 CPU / MEM / Disk 추이 표시 | 완료 |
 | P1 | 이력 보존 정책 | 상태 이력 최대 7일 보존 후 자동 삭제 | 완료 |
@@ -543,11 +543,11 @@ device_metrics_history
 
 | 마일스톤 | 내용 | 목표일 | 완료 여부 |
 |---|---|---|---|
-| M1 | 환경 세팅, 프로젝트 구조, DB 스키마, 기본 Fastify 서버, 로그인/Access·Refresh Token | '26. 08. 17. | ☐ |
-| M2-a | 디바이스 CRUD, 페어링 코드 발급/검증, WOL 전송, WOL 실패 상태 설계 | '26. 08. 21. | ☐ |
-| M2-b | 단일 OS Agent 개발, 페어링 연동, 10초 heartbeat, CPU/MEM/Disk 수집 | '26. 08. 25. | ☐ |
-| M3-a | Server ↔ Agent 통합, NOT_PAIRED/ONLINE/OFFLINE 판정, WebSocket 상태 반영 | '26. 08. 27. | ☐ |
-| M3-b | UI 개선, 에러 핸들링, WOL 실패 UX, 기본 테스트 | '26. 08. 31. | ☐ |
+| M1 | 환경 세팅, 프로젝트 구조, DB 스키마, 기본 Fastify 서버, 로그인/Access·Refresh Token | '26. 08. 17. | ☑ |
+| M2-a | 디바이스 CRUD, 페어링 코드 발급/검증, WOL 전송, WOL 실패 상태 설계 | '26. 08. 21. | ☑ |
+| M2-b | 단일 OS Agent 개발, 페어링 연동, 10초 heartbeat, CPU/MEM/Disk 수집 | '26. 08. 25. | ☑ |
+| M3-a | Server ↔ Agent 통합, NOT_PAIRED/ONLINE/OFFLINE 판정, WebSocket 상태 반영 | '26. 08. 27. | ☑ |
+| M3-b | UI 개선, 에러 핸들링, WOL 실패 UX, 기본 테스트 | '26. 08. 31. | ☑ |
 | M4 | Docker 배포, 재시작 복구 검증, 실사용 테스트, 홈서버 상시 배포 | '26. 09. 04. | ☐ |
 
 ---
@@ -600,40 +600,40 @@ device_metrics_history
 
 ### 인증
 
-- [ ] 정상 계정으로 로그인할 수 있다.
-- [ ] 잘못된 비밀번호로 로그인할 수 없다.
-- [ ] 로그인 비밀번호가 DB에 평문으로 저장되지 않는다.
-- [ ] 로그인 성공 시 Access Token과 Refresh Token이 발급된다.
-- [ ] Access Token 만료 후 Refresh Token으로 재발급받을 수 있다.
-- [ ] 로그아웃 시 Refresh Token이 무효화되어 재사용할 수 없다.
-- [ ] 유효하지 않은 Access Token으로 보호된 API 접근이 거부된다.
+- [x] 정상 계정으로 로그인할 수 있다.
+- [x] 잘못된 비밀번호로 로그인할 수 없다.
+- [x] 로그인 비밀번호가 DB에 평문으로 저장되지 않는다.
+- [x] 로그인 성공 시 Access Token과 Refresh Token이 발급된다.
+- [x] Access Token 만료 후 Refresh Token으로 재발급받을 수 있다.
+- [x] 로그아웃 시 Refresh Token이 무효화되어 재사용할 수 없다.
+- [x] 유효하지 않은 Access Token으로 보호된 API 접근이 거부된다.
 
 ### 디바이스 / 페어링
 
-- [ ] 디바이스를 등록할 수 있다.
-- [ ] 디바이스 등록 시 일회용 페어링 코드가 발급된다.
-- [ ] 올바른 페어링 코드로 Agent가 서버와 페어링되고 API Key를 발급받는다.
-- [ ] 만료되거나 잘못된 페어링 코드로는 페어링이 거부된다.
-- [ ] 페어링 코드는 1회 사용 후 재사용할 수 없다.
-- [ ] 디바이스를 수정할 수 있다.
-- [ ] 디바이스를 삭제할 수 있다.
+- [x] 디바이스를 등록할 수 있다.
+- [x] 디바이스 등록 시 일회용 페어링 코드가 발급된다.
+- [x] 올바른 페어링 코드로 Agent가 서버와 페어링되고 API Key를 발급받는다.
+- [x] 만료되거나 잘못된 페어링 코드로는 페어링이 거부된다.
+- [x] 페어링 코드는 1회 사용 후 재사용할 수 없다.
+- [x] 디바이스를 수정할 수 있다.
+- [x] 디바이스를 삭제할 수 있다.
 - [ ] 서버 재시작 후 디바이스 정보가 유지된다.
 
 ### WOL
 
-- [ ] 등록된 디바이스에 WOL 패킷을 전송할 수 있다.
-- [ ] WOL 성공 후 Agent heartbeat가 다시 수신된다.
-- [ ] 3분 내 상태 회복이 없으면 사용자에게 `WAKE_TIMEOUT` 상태가 표시된다.
-- [ ] 페어링되지 않은(`NOT_PAIRED`) 디바이스는 WOL 실패가 아닌 별도 안내가 표시된다.
+- [x] 등록된 디바이스에 WOL 패킷을 전송할 수 있다.
+- [x] WOL 성공 후 Agent heartbeat가 다시 수신된다.
+- [x] 3분 내 상태 회복이 없으면 사용자에게 `WAKE_TIMEOUT` 상태가 표시된다.
+- [x] 페어링되지 않은(`NOT_PAIRED`) 디바이스는 WOL 실패가 아닌 별도 안내가 표시된다.
 
 ### Agent
 
-- [ ] Agent가 API Key 인증을 통과한다.
-- [ ] 잘못된 API Key 요청이 거부된다.
-- [ ] Agent가 10초마다 heartbeat를 전송한다.
-- [ ] CPU / MEM / Disk 데이터가 정상적으로 수집된다.
-- [ ] 마지막 heartbeat 이후 30초 이상 지나면 OFFLINE으로 변경된다.
-- [ ] Agent가 다시 heartbeat를 보내면 ONLINE으로 복구된다.
+- [x] Agent가 API Key 인증을 통과한다.
+- [x] 잘못된 API Key 요청이 거부된다.
+- [x] Agent가 10초마다 heartbeat를 전송한다.
+- [x] CPU / MEM / Disk 데이터가 정상적으로 수집된다.
+- [x] 마지막 heartbeat 이후 30초 이상 지나면 OFFLINE으로 변경된다.
+- [x] Agent가 다시 heartbeat를 보내면 ONLINE으로 복구된다.
 
 ### 실시간 UI
 
@@ -651,21 +651,21 @@ device_metrics_history
 
 ## 13. 완료 기준 (Definition of Done)
 
-- [ ] 웹 UI에서 디바이스를 등록 / 수정 / 삭제할 수 있다.
-- [ ] 로그인 기능이 정상 동작한다.
-- [ ] 비밀번호는 평문으로 저장되지 않는다.
-- [ ] 로그인 성공 시 Access/Refresh Token이 발급되고, 보호된 API가 Access Token으로 인증된다.
-- [ ] Access Token 만료 시 Refresh Token으로 재발급이 가능하다.
-- [ ] 디바이스 등록 시 발급된 페어링 코드로 Agent가 서버와 정상 페어링된다.
-- [ ] 페어링되지 않은 디바이스는 `NOT_PAIRED` 상태로 명확히 구분되어 표시된다.
-- [ ] 등록된 디바이스에 WOL 패킷을 전송해 실제로 전원을 켤 수 있다.
-- [ ] WOL 요청 후 3분 내 상태 변화가 없으면 실패 상태가 표시된다.
-- [ ] 최소 1대 이상의 디바이스에서 Agent를 통해 CPU / MEM / Disk 상태가 수집된다.
-- [ ] Agent는 10초 주기로 heartbeat를 전송한다.
-- [ ] heartbeat가 30초 이상 끊기면 디바이스가 OFFLINE으로 판정된다.
-- [ ] Agent ↔ Server 통신에 API Key 인증이 적용되어 있다.
-- [ ] 최신 상태 데이터가 `device_metrics_latest` 별도 테이블에서 관리된다.
-- [ ] 웹 UI에서 최신 상태가 WebSocket으로 실시간 반영된다.
+- [x] 웹 UI에서 디바이스를 등록 / 수정 / 삭제할 수 있다.
+- [x] 로그인 기능이 정상 동작한다.
+- [x] 비밀번호는 평문으로 저장되지 않는다.
+- [x] 로그인 성공 시 Access/Refresh Token이 발급되고, 보호된 API가 Access Token으로 인증된다.
+- [x] Access Token 만료 시 Refresh Token으로 재발급이 가능하다.
+- [x] 디바이스 등록 시 발급된 페어링 코드로 Agent가 서버와 정상 페어링된다.
+- [x] 페어링되지 않은 디바이스는 `NOT_PAIRED` 상태로 명확히 구분되어 표시된다.
+- [x] 등록된 디바이스에 WOL 패킷을 전송해 실제로 전원을 켤 수 있다.
+- [x] WOL 요청 후 3분 내 상태 변화가 없으면 실패 상태가 표시된다.
+- [x] 최소 1대 이상의 디바이스에서 Agent를 통해 CPU / MEM / Disk 상태가 수집된다.
+- [x] Agent는 10초 주기로 heartbeat를 전송한다.
+- [x] heartbeat가 30초 이상 끊기면 디바이스가 OFFLINE으로 판정된다.
+- [x] Agent ↔ Server 통신에 API Key 인증이 적용되어 있다.
+- [x] 최신 상태 데이터가 `device_metrics_latest` 별도 테이블에서 관리된다.
+- [x] 웹 UI에서 최신 상태가 WebSocket으로 실시간 반영된다.
 - [ ] Docker 컨테이너로 홈서버에 상시 배포되어 있다.
 - [ ] 서버 / 컨테이너 재시작 후 디바이스 정보가 유지된다.
 
@@ -684,6 +684,17 @@ device_metrics_history
 ---
 
 ## 15. 변경 이력
+
+### v0.5 ('26. 09. 16.)
+
+- 이 문서의 상태 표시(§5 기능 표, §10 일정, §12 테스트 기준, §13 DoD)를 실제 코드/자동 테스트 기준으로 동기화
+- 페어링 코드를 특정 대상 디바이스에 바인딩하여 재페어링 시 다른 기기가 코드를 가로채지 못하도록 개선 (PR #2)
+- 서버/웹/개발 서버 포트 설정을 `dmw.conf` (`SERVER_PORT`, `WS_PORT`, `WEB_DEV_PORT`, `WEB_PREVIEW_PORT`)로 통합 관리
+- 로그아웃 시 회전된(rotate) Refresh Token의 살아있는 후속 세션까지 함께 무효화
+- Discord/Slack 웹훅과 별개로 Telegram 봇 알림(`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) 지원 추가
+- 인증 / 페어링 / WOL / Agent 흐름에 대한 통합 테스트(`integration-auth`, `integration-devices`, `integration-wake`, `integration-agent`) 추가
+- 웹 UI에 `NOT_PAIRED` 상태에서 WOL 요청 시 안내 문구(wake notice) 추가
+- `npm test` 실행 전 `dist` 산출물을 삭제 후 재빌드하도록 변경하여 낡은 빌드로 인한 테스트 오탐 방지
 
 ### v0.4
 

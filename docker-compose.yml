@@ -3,24 +3,22 @@ version: "3.9"
 services:
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     container_name: dmw-server
     restart: unless-stopped
+    network_mode: host
     environment:
       PORT: 3001
       WS_PORT: 3002
+      BIND_HOST: 127.0.0.1
       NODE_ENV: production
-      TRUST_PROXY: ${TRUST_PROXY:-false}
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file at the project root before running docker compose}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in a .env file at the project root before running docker compose}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEB_DEV_PORT:-5173},http://127.0.0.1:${WEB_DEV_PORT:-5173}}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-    ports:
-      - "${SERVER_PORT:-3001}:3001"
-      - "${WS_PORT:-3002}:3002"
     volumes:
       - dmw_data:/app/data
     healthcheck:
@@ -41,12 +39,11 @@ services:
         WS_PORT: ${WS_PORT:-3002}
     container_name: dmw-web
     restart: unless-stopped
-    ports:
-      - "${WEB_DEV_PORT:-5173}:80"
-    depends_on:
-      - server
+    network_mode: host
+    environment:
+      WEB_DEV_PORT: ${WEB_DEV_PORT:-5173}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WEB_DEV_PORT:-5173}/"]
       interval: 30s
       timeout: 5s
       retries: 3

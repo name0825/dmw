@@ -2,8 +2,12 @@ version: "3.9"
 
 services:
   web:
+    environment:
+      WEB_HTTPS_PORT: ${WEB_HTTPS_PORT:-8443}
     volumes:
       - ./certs:/etc/nginx/certs:ro
-      - ./web/nginx/https.conf:/etc/nginx/conf.d/https/https.conf:ro
-    ports:
-      - "${WEB_HTTPS_PORT:-8443}:443"
+      - ./web/nginx/https.conf:/etc/nginx/templates/https/https.conf.template:ro
+      - ./web/nginx/https-redirect.conf.template:/etc/nginx/templates/default.conf.template:ro
+  server:
+    environment:
+      COOKIE_SECURE: "true"

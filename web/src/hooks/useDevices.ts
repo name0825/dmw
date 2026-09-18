@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { mapHistory, normalizeAlerts, normalizeDevices } from '../api'
 import { IPV4_RE, MAC_RE } from '../constants'
@@ -29,8 +29,10 @@ export const useDevices = (
   const [editingId, setEditingId] = useState<number | null>(null)
   const [historyByDevice, setHistoryByDevice] = useState<Record<number, DeviceHistoryEntry[]>>({})
   const [alerts, setAlerts] = useState<AlertItem[]>([])
+  const sessionRef = useRef(0)
 
   const resetDevices = () => {
+    sessionRef.current += 1
     setDevices([])
     setAlerts([])
     setHistoryByDevice({})
@@ -43,7 +45,10 @@ export const useDevices = (
   const loadDevices = async () => {
     if (!token) return
 
+    const session = sessionRef.current
     const { res, data } = await authedRequest(`${apiBase}/devices`)
+
+    if (session !== sessionRef.current) return
 
     if (!res.ok) {
       setMessage('디바이스 목록을 불러오지 못했습니다.')
@@ -53,6 +58,8 @@ export const useDevices = (
     setDevices(normalizeDevices(data?.devices ?? []))
 
     const alertResult = await authedRequest(`${apiBase}/alerts`)
+
+    if (session !== sessionRef.current) return
 
     if (alertResult.res.ok) {
       setAlerts(normalizeAlerts(alertResult.data?.alerts ?? []))

@@ -1,5 +1,5 @@
 import { WebSocketServer, WebSocket } from 'ws'
-import { WS_PORT } from '../config.js'
+import { BIND_HOST, WS_PORT } from '../config.js'
 import { getDb } from '../database/index.js'
 import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
 
@@ -77,6 +77,7 @@ export const setupWebSocket = () => {
   // Initialize WebSocket server
   const server = new WebSocketServer({
     port: WS_PORT,
+    host: BIND_HOST,
     // 실제 인가 판정(서명 + token_version)은 여기서 내린다. handleProtocols 는
     // 동기 함수라 DB 조회가 불가능하므로 서명 검증만 하는 사전 필터일 뿐이며,
     // handleProtocols 를 통과했더라도 여기서 거절되면 연결은 성립하지 않는다.
@@ -101,6 +102,8 @@ export const setupWebSocket = () => {
     },
   });
   wss = server;
+
+  server.on('error', (err: Error) => console.error('[WebSocket] Server error:', err))
 
   server.on('connection', (ws: any) => {
     console.log('[WebSocket] Client connected')

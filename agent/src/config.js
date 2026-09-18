@@ -13,7 +13,7 @@ export const parseArgs = (argv) => {
     } else if (flags[arg]) args[flags[arg]] = true
     else throw new Error(`알 수 없는 옵션: ${arg}`)
   }
-  if (args.interval && (!Number.isFinite(Number(args.interval)) || Number(args.interval) < 1000)) throw new Error('--interval은 1000 이상의 밀리초여야 합니다.')
+  if (args.interval && (!Number.isFinite(Number(args.interval)) || Number(args.interval) < 1000 || Number(args.interval) > 20000)) throw new Error('--interval은 1000 이상 20000 이하의 밀리초여야 합니다.')
   if (args.enableAutostart && args.disableAutostart) throw new Error('자동실행 켜기/끄기를 동시에 지정할 수 없습니다.')
   if (args.unpair && args.repair) throw new Error('--unpair와 --repair를 동시에 지정할 수 없습니다.')
   if (args.force && !args.unpair && !args.repair) throw new Error('--force는 --unpair 또는 --repair와 함께 사용하세요.')
@@ -25,6 +25,9 @@ export const normalizeServerUrl = (input) => {
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
   const url = new URL(withScheme)
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('올바른 HTTP 서버 주소가 필요합니다.')
+  if (url.protocol === 'http:' && !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)) {
+    console.error('경고: 서버 주소가 http://이므로 API 키가 평문으로 전송됩니다. https:// 사용을 권장합니다.')
+  }
   return withScheme.replace(/\/+$/, '')
 }
 

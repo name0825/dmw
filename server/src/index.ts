@@ -4,16 +4,17 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 
-import { APP_ENV, CORS_ORIGIN, PORT, WEB_DEV_PORT, validateRuntimeConfig } from './config.js'
+import { APP_ENV, BIND_HOST, CORS_ORIGIN, PORT, WEB_DEV_PORT, validateRuntimeConfig } from './config.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware } from './middleware/auth.js'
 import { isPublicRoute } from './auth.js'
 import { registerRoutes } from './routes.js'
 import { setupWebSocket, closeWebSocket } from './services/ws.js'
 
-const TRUST_PROXY = process.env.TRUST_PROXY === 'true' || process.env.TRUST_PROXY === '1'
-
-const app = Fastify({ logger: false, trustProxy: TRUST_PROXY })
+// Only trust X-Forwarded-For when the immediate peer is loopback (i.e. nginx
+// running on the same host via network_mode: host). Direct LAN clients are
+// never loopback, so their IP is used as-is and headers can't be spoofed.
+const app = Fastify({ logger: false, trustProxy: 'loopback' })
 
 await app.register(cookie)
 await app.register(cors, {
@@ -56,7 +57,7 @@ await pool.run('PRAGMA foreign_keys = ON')
 
 await registerRoutes(app)
 
-await app.listen({ port: PORT, host: '0.0.0.0' })
+await app.listen({ port: PORT, host: BIND_HOST })
 setupWebSocket()
 console.log(`DMW server listening on http://localhost:${PORT}`)
 
