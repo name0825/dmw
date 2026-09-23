@@ -19,7 +19,7 @@ export default function App() {
 
   const resetDevicesRef = useRef<() => void>(() => {})
 
-  const { login, setLogin, token, refreshSession, authedRequest, loginUser, logoutUser } = useAuth(
+  const { login, setLogin, token, refreshSession, authedRequest, loginUser, loggingIn, logoutUser } = useAuth(
     apiBase,
     setMessage,
     () => {
@@ -39,9 +39,11 @@ export default function App() {
     setEditingId,
     resetDevices,
     saveDevice,
+    saving,
     deleteDevice,
     editDevice,
     wakeDevice,
+    pendingIds,
     loadHistory,
     summary,
   } = useDevices(apiBase, token, authedRequest, setMessage)
@@ -151,7 +153,7 @@ export default function App() {
         {token ? (
           <button onClick={logoutUser}>로그아웃</button>
         ) : (
-          <button onClick={loginUser}>로그인</button>
+          <button onClick={loginUser} disabled={loggingIn}>로그인</button>
         )}
       </header>
 
@@ -166,7 +168,7 @@ export default function App() {
             비밀번호
             <input type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} />
           </label>
-          <button onClick={loginUser}>로그인</button>
+          <button onClick={loginUser} disabled={loggingIn}>로그인</button>
         </section>
       ) : (
         <>
@@ -244,7 +246,7 @@ export default function App() {
               </label>
             </div>
             <div className="action-row">
-              <button onClick={saveDevice}>{editingId !== null ? '저장' : '디바이스 등록'}</button>
+              <button onClick={saveDevice} disabled={saving}>{editingId !== null ? '저장' : '디바이스 등록'}</button>
               {editingId !== null && (
                 <button className="secondary" onClick={() => {
                   setEditingId(null)
@@ -291,8 +293,8 @@ export default function App() {
                     </div>
                     <div className="device-actions">
                       <button onClick={() => editDevice(device)}>수정</button>
-                      <button className="secondary" onClick={() => deleteDevice(device.id)}>삭제</button>
-                      <button onClick={() => wakeDevice(device.id)}>Wake</button>
+                      <button className="secondary" onClick={() => deleteDevice(device.id)} disabled={pendingIds.has(device.id)}>삭제</button>
+                      <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>Wake</button>
                       <button className="secondary" onClick={() => loadHistory(device.id)}>History</button>
                       {device.agent_paired && (
                         <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>

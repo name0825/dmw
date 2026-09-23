@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { authorizedRequest, requestJson } from '../api'
 
@@ -18,6 +18,8 @@ export const useAuth = (
 ) => {
   const [login, setLogin] = useState({ email: '', password: '' })
   const [token, setToken] = useState('')
+  const loggingInRef = useRef(false)
+  const [loggingIn, setLoggingIn] = useState(false)
 
   /**
    * Clear local session state without contacting the server.
@@ -73,20 +75,31 @@ export const useAuth = (
    * Authenticate with the admin username and password.
    */
   const loginUser = async () => {
-    const { res, data } = await requestJson(`${apiBase}/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(login),
-    })
+    if (loggingInRef.current) return
+    loggingInRef.current = true
+    setLoggingIn(true)
 
-    if (!res.ok) {
-      setMessage(data?.message || '로그인 실패')
-      return
+    try {
+      const { res, data } = await requestJson(`${apiBase}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(login),
+      })
+
+      if (!res.ok) {
+        setMessage(data?.message || '로그인 실패')
+        return
+      }
+
+      setToken(data.accessToken)
+      setMessage('로그인 성공')
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      loggingInRef.current = false
+      setLoggingIn(false)
     }
-
-    setToken(data.accessToken)
-    setMessage('로그인 성공')
   }
 
   /**
@@ -111,5 +124,5 @@ export const useAuth = (
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  return { login, setLogin, token, refreshSession, authedRequest, loginUser, logoutUser }
+  return { login, setLogin, token, refreshSession, authedRequest, loginUser, loggingIn, logoutUser }
 }

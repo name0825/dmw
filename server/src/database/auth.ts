@@ -189,6 +189,19 @@ export const getRefreshLookupId = (refreshToken: string): string =>
   (refreshToken.slice(0, REFRESH_LOOKUP_LEN) || '').toLowerCase().trim()
 
 /**
+ * 만료된 리프레시 토큰 행을 삭제함.
+ * revoked 여부와 무관하게 expires_at 이 지난 행만 지운다 — 재사용 탐지
+ * (findRevokedRefreshTokenMatch, findLiveRotationTip) 는 폐기됐지만 아직
+ * 만료되지 않은 행에 의존하므로 그런 행은 건드리지 않는다.
+ * @param db - SQLite DB 연결
+ * @returns 삭제된 행 수
+ */
+export const pruneExpiredRefreshTokens = async (db: any = getDb()): Promise<number> => {
+  const result = await db.run('DELETE FROM refresh_tokens WHERE expires_at < ?', [new Date().toISOString()])
+  return result?.changes ?? 0
+}
+
+/**
  * 관리자가 존재하는지 확인하고 없으면 생성함.
  * @param db - SQLite DB 연결
  */

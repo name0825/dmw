@@ -30,6 +30,10 @@ export const useDevices = (
   const [historyByDevice, setHistoryByDevice] = useState<Record<number, DeviceHistoryEntry[]>>({})
   const [alerts, setAlerts] = useState<AlertItem[]>([])
   const sessionRef = useRef(0)
+  const savingRef = useRef(false)
+  const [saving, setSaving] = useState(false)
+  const pendingIdsRef = useRef<Set<number>>(new Set())
+  const [pendingIds, setPendingIds] = useState<Set<number>>(new Set())
 
   const resetDevices = () => {
     sessionRef.current += 1
@@ -46,23 +50,29 @@ export const useDevices = (
     if (!token) return
 
     const session = sessionRef.current
-    const { res, data } = await authedRequest(`${apiBase}/devices`)
 
-    if (session !== sessionRef.current) return
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices`)
 
-    if (!res.ok) {
-      setMessage('디바이스 목록을 불러오지 못했습니다.')
-      return
-    }
+      if (session !== sessionRef.current) return
 
-    setDevices(normalizeDevices(data?.devices ?? []))
+      if (!res.ok) {
+        setMessage('디바이스 목록을 불러오지 못했습니다.')
+        return
+      }
 
-    const alertResult = await authedRequest(`${apiBase}/alerts`)
+      setDevices(normalizeDevices(data?.devices ?? []))
 
-    if (session !== sessionRef.current) return
+      const alertResult = await authedRequest(`${apiBase}/alerts`)
 
-    if (alertResult.res.ok) {
-      setAlerts(normalizeAlerts(alertResult.data?.alerts ?? []))
+      if (session !== sessionRef.current) return
+
+      if (alertResult.res.ok) {
+        setAlerts(normalizeAlerts(alertResult.data?.alerts ?? []))
+      }
+    } catch {
+      if (session !== sessionRef.current) return
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
     }
   }
 
@@ -93,24 +103,35 @@ export const useDevices = (
       return
     }
 
+    if (savingRef.current) return
+    savingRef.current = true
+    setSaving(true)
+
     const method = editingId !== null ? 'PATCH' : 'POST'
     const endpoint = editingId !== null ? `${apiBase}/devices/${editingId}` : `${apiBase}/devices`
 
-    const { res, data } = await authedRequest(endpoint, {
-      method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
+    try {
+      const { res, data } = await authedRequest(endpoint, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
 
-    if (!res.ok) {
-      setMessage(data?.message || '디바이스 저장 실패')
-      return
+      if (!res.ok) {
+        setMessage(data?.message || '디바이스 저장 실패')
+        return
+      }
+
+      setMessage(editingId !== null ? '디바이스 수정 완료' : '디바이스 등록 완료')
+      setForm({ name: '', mac_address: '', ip_address: '' })
+      setEditingId(null)
+      await loadDevices()
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      savingRef.current = false
+      setSaving(false)
     }
-
-    setMessage(editingId !== null ? '디바이스 수정 완료' : '디바이스 등록 완료')
-    setForm({ name: '', mac_address: '', ip_address: '' })
-    setEditingId(null)
-    await loadDevices()
   }
 
   /**
@@ -118,11 +139,22 @@ export const useDevices = (
    * @param {number} id - Device identifier.
    */
   const deleteDevice = async (id: number) => {
-    const { res, data } = await authedRequest(`${apiBase}/devices/${id}`, { method: 'DELETE' })
+    if (pendingIdsRef.current.has(id)) return
+    pendingIdsRef.current.add(id)
+    setPendingIds(new Set(pendingIdsRef.current))
 
-    if (res.ok) {
-      setMessage(data?.message || '디바이스 삭제 완료')
-      await loadDevices()
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices/${id}`, { method: 'DELETE' })
+
+      if (res.ok) {
+        setMessage(data?.message || '디바이스 삭제 완료')
+        await loadDevices()
+      }
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      pendingIdsRef.current.delete(id)
+      setPendingIds(new Set(pendingIdsRef.current))
     }
   }
 
@@ -144,15 +176,26 @@ export const useDevices = (
    * @param {number} id - Device identifier.
    */
   const wakeDevice = async (id: number) => {
-    const { res, data } = await authedRequest(`${apiBase}/devices/${id}/wake`, { method: 'POST' })
+    if (pendingIdsRef.current.has(id)) return
+    pendingIdsRef.current.add(id)
+    setPendingIds(new Set(pendingIdsRef.current))
 
-    if (res.ok && data?.agentPaired === false) {
-      setMessage('WOL 신호는 보냈지만 Agent가 설치/페어링되지 않아 전원 상태를 확인할 수 없습니다.')
-    } else {
-      setMessage(data?.message || 'Wake 요청 전송')
-    }
-    if (res.ok) {
-      await loadDevices()
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices/${id}/wake`, { method: 'POST' })
+
+      if (res.ok && data?.agentPaired === false) {
+        setMessage('WOL 신호는 보냈지만 Agent가 설치/페어링되지 않아 전원 상태를 확인할 수 없습니다.')
+      } else {
+        setMessage(data?.message || 'Wake 요청 전송')
+      }
+      if (res.ok) {
+        await loadDevices()
+      }
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      pendingIdsRef.current.delete(id)
+      setPendingIds(new Set(pendingIdsRef.current))
     }
   }
 
@@ -161,14 +204,18 @@ export const useDevices = (
    * @param {number} deviceId - Device identifier.
    */
   const loadHistory = async (deviceId: number) => {
-    const { res, data } = await authedRequest(`${apiBase}/devices/${deviceId}/history`)
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices/${deviceId}/history`)
 
-    if (!res.ok) {
-      setMessage('히스토리를 불러오지 못했습니다.')
-      return
+      if (!res.ok) {
+        setMessage('히스토리를 불러오지 못했습니다.')
+        return
+      }
+
+      setHistoryByDevice((prev) => mapHistory(prev, deviceId, data?.history ?? []))
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
     }
-
-    setHistoryByDevice((prev) => mapHistory(prev, deviceId, data?.history ?? []))
   }
 
   const summary = {
@@ -189,9 +236,11 @@ export const useDevices = (
     setEditingId,
     resetDevices,
     saveDevice,
+    saving,
     deleteDevice,
     editDevice,
     wakeDevice,
+    pendingIds,
     loadHistory,
     summary,
   }
