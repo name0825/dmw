@@ -31,7 +31,7 @@ let historyPruneInFlight = false
 /**
  * device_metrics_history 에서 보존 기간이 지난 오래된 행을 삭제함.
  */
-export const pruneMetricsHistory = async () => {
+const pruneMetricsHistory = async () => {
   const cutoff = new Date(Date.now() - HISTORY_RETENTION_MS).toISOString()
   await withTransaction(async (tx) => {
     await tx.run('DELETE FROM device_metrics_history WHERE timestamp < ?', [cutoff])
@@ -41,14 +41,14 @@ export const pruneMetricsHistory = async () => {
 /**
  * alerts 에서 보존 기간이 지난 오래된 행을 삭제함.
  */
-export const pruneAlerts = async () => {
+const pruneAlerts = async () => {
   const cutoff = new Date(Date.now() - ALERT_RETENTION_MS).toISOString()
   await withTransaction(async (tx) => {
     await tx.run('DELETE FROM alerts WHERE created_at < ?', [cutoff])
   })
 }
 
-export const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
+const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
   const devices = await tx.all(
     'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
     [STATUS_ONLINE, STATUS_OFFLINE, STATUS_WAKE_TIMEOUT],

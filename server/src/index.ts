@@ -4,14 +4,18 @@ import cookie from '@fastify/cookie'
 import cors from '@fastify/cors'
 import rateLimit from '@fastify/rate-limit'
 
-import { APP_ENV, CORS_ORIGIN, PORT, WEB_DEV_PORT, validateRuntimeConfig } from './config.js'
+import { APP_ENV, BIND_HOST, CORS_ORIGIN, PORT, WEB_DEV_PORT, validateRuntimeConfig } from './config.js'
+import { RATE_LIMIT_TIME_WINDOW } from './config/constants.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware } from './middleware/auth.js'
 import { isPublicRoute } from './auth.js'
 import { registerRoutes } from './routes.js'
 import { setupWebSocket, closeWebSocket } from './services/ws.js'
 
-const app = Fastify({ logger: false })
+// Only trust X-Forwarded-For when the immediate peer is loopback (i.e. nginx
+// running on the same host via network_mode: host). Direct LAN clients are
+// never loopback, so their IP is used as-is and headers can't be spoofed.
+const app = Fastify({ logger: false, trustProxy: 'loopback' })
 
 await app.register(cookie)
 await app.register(cors, {
@@ -29,7 +33,7 @@ await app.register(cors, {
 
 await app.register(rateLimit, {
   max: 300,
-  timeWindow: '1 minute',
+  timeWindow: RATE_LIMIT_TIME_WINDOW,
   keyGenerator: (request: any) => request.ip,
   // statusCode 를 담지 않으면 Fastify 가 일반 에러로 처리해 500 을 내보낸다.
   // 한도 초과는 클라이언트가 재시도로 회복할 수 있는 상황이므로 429 여야 한다.
@@ -49,19 +53,18 @@ app.addHook('preHandler', async (request: any, reply) => {
 validateRuntimeConfig()
 
 // DB 풀 초기화 및 admin 계정 생성
-const pool = await initPool()
-await pool.run('PRAGMA foreign_keys = ON')
+await initPool()
 
 await registerRoutes(app)
 
-await app.listen({ port: PORT, host: '0.0.0.0' })
+await app.listen({ port: PORT, host: BIND_HOST })
 setupWebSocket()
 console.log(`DMW server listening on http://localhost:${PORT}`)
 
 let isShuttingDown = false
 
 // HTTP 먼저 닫아 새 요청을 막고, WS 로 실시간 연결을 끊은 뒤, 마지막에 DB 풀을 정리한다.
-const shutdown = async (signal: string) => {
+const shutdown = async (_signal: string) => {
   if (isShuttingDown) return
   isShuttingDown = true
 

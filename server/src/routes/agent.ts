@@ -1,4 +1,9 @@
-import { AGENT_PAIR_RATE_LIMIT_MAX } from '../config/constants.js'
+import {
+  AGENT_PAIR_RATE_LIMIT_MAX,
+  AGENT_HEARTBEAT_RATE_LIMIT_MAX,
+  AGENT_UNPAIR_RATE_LIMIT_MAX,
+  RATE_LIMIT_TIME_WINDOW,
+} from '../config/constants.js'
 import * as agentService from '../services/agent.js'
 
 // ============================================================================
@@ -10,15 +15,15 @@ import * as agentService from '../services/agent.js'
  * @param app - Fastify app instance
  */
 export const registerAgentRoutes = (app: any) => {
-  app.post('/agent/pair', { config: { rateLimit: { max: AGENT_PAIR_RATE_LIMIT_MAX, timeWindow: '1 minute' } } }, async (request: any, reply: any) => {
+  app.post('/agent/pair', { config: { rateLimit: { max: AGENT_PAIR_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
     return await agentService.handlePair(request, reply)
   })
 
-  app.post('/agent/heartbeat', async (request: any, reply: any) => {
+  app.post('/agent/heartbeat', { config: { rateLimit: { max: AGENT_HEARTBEAT_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
     return await agentService.handleHeartbeat(request, reply)
   })
 
-  app.post('/agent/unpair', async (request: any, reply: any) => {
+  app.post('/agent/unpair', { config: { rateLimit: { max: AGENT_UNPAIR_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
     return await agentService.handleUnpair(request, reply)
   })
 }

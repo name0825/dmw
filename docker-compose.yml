@@ -3,23 +3,26 @@ version: "3.9"
 services:
   server:
     build:
-      context: ./server
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: server/Dockerfile
     container_name: dmw-server
     restart: unless-stopped
+    network_mode: host
     environment:
       PORT: 3001
       WS_PORT: 3002
+      BIND_HOST: 127.0.0.1
       NODE_ENV: production
-      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file at the project root before running docker compose}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
-      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-admin123}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in a .env file at the project root before running docker compose}
       CORS_ORIGIN: ${CORS_ORIGIN:-http://localhost:${WEB_DEV_PORT:-5173},http://127.0.0.1:${WEB_DEV_PORT:-5173}}
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
       TELEGRAM_CHAT_ID: ${TELEGRAM_CHAT_ID:-}
-    ports:
-      - "${SERVER_PORT:-3001}:3001"
-      - "${WS_PORT:-3002}:3002"
+      DISCORD_WEBHOOK_URL: ${DISCORD_WEBHOOK_URL:-}
+      SLACK_WEBHOOK_URL: ${SLACK_WEBHOOK_URL:-}
+      WOL_BROADCAST_ADDRESS: ${WOL_BROADCAST_ADDRESS:-}
+      SSH_KEY_PATH: ${SSH_KEY_PATH:-/app/data/ssh/dmw_ed25519}
     volumes:
       - dmw_data:/app/data
     healthcheck:
@@ -34,16 +37,17 @@ services:
       context: ./web
       dockerfile: Dockerfile
       args:
-        VITE_API_BASE: ${VITE_API_BASE:-http://localhost:${SERVER_PORT:-3001}}
-        VITE_WS_BASE: ${VITE_WS_BASE:-ws://localhost:${WS_PORT:-3002}}
+        VITE_API_BASE: ${VITE_API_BASE:-}
+        VITE_WS_BASE: ${VITE_WS_BASE:-}
+        SERVER_PORT: ${SERVER_PORT:-3001}
+        WS_PORT: ${WS_PORT:-3002}
     container_name: dmw-web
     restart: unless-stopped
-    ports:
-      - "${WEB_DEV_PORT:-5173}:80"
-    depends_on:
-      - server
+    network_mode: host
+    environment:
+      WEB_DEV_PORT: ${WEB_DEV_PORT:-5173}
     healthcheck:
-      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:${WEB_DEV_PORT:-5173}/"]
       interval: 30s
       timeout: 5s
       retries: 3

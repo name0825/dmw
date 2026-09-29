@@ -12,6 +12,7 @@ import { autostartEntry, installLauncher } from '../src/autostart.js'
 import { parseArgs } from '../src/config.js'
 import { checkForUpdate, isNewerVersion, validateBundle } from '../src/update.js'
 import { HttpError, requestJson } from '../src/http.js'
+import { computeBackoffDelay } from '../src/retry.js'
 
 const agentEntry = fileURLToPath(new URL('../src/index.js', import.meta.url))
 
@@ -32,6 +33,26 @@ const response = (body, status = 200) => ({
   ok: status >= 200 && status < 300,
   status,
   body: (async function* () { yield Buffer.isBuffer(body) ? body : Buffer.from(body) })(),
+})
+
+test('--interval rejects values outside the 1000-20000ms range and accepts the bounds', () => {
+  assert.throws(() => parseArgs(['--interval', '999']), /1000 이상 20000 이하/)
+  assert.throws(() => parseArgs(['--interval', '20001']), /1000 이상 20000 이하/)
+  assert.equal(parseArgs(['--interval', '1000']).interval, '1000')
+  assert.equal(parseArgs(['--interval', '20000']).interval, '20000')
+})
+
+test('computeBackoffDelay doubles from the base interval, caps at 5 minutes, and resets when failureCount is 0', () => {
+  const noJitter = { random: () => 0 }
+  assert.equal(computeBackoffDelay(10000, 0, noJitter), 10000)
+  assert.equal(computeBackoffDelay(10000, 1, noJitter), 10000)
+  assert.equal(computeBackoffDelay(10000, 2, noJitter), 20000)
+  assert.equal(computeBackoffDelay(10000, 3, noJitter), 40000)
+  assert.equal(computeBackoffDelay(10000, 20, noJitter), 5 * 60 * 1000)
+
+  const maxJitter = { random: () => 1 }
+  const withJitter = computeBackoffDelay(10000, 2, maxJitter)
+  assert.ok(withJitter > 20000 && withJitter <= 22000)
 })
 
 test('CLI options expose unpairing, autostart, update, and background controls', () => {
@@ -366,7 +387,7 @@ test('CLI unpair sends the stored key to the server and clears local credentials
       const result = await runAgent(['--unpair'], { DMW_STATE_DIR: state })
       assert.equal(result.code, 0)
       assert.equal(authorization, 'Bearer stored-agent-key')
-      assert.equal(JSON.parse(fs.readFileSync(path.join(state, 'credentials.json'), 'utf8')), null)
+      assert.equal(fs.existsSync(path.join(state, 'credentials.json')), false)
     } finally {
       await new Promise((resolve) => server.close(resolve))
     }
@@ -384,7 +405,7 @@ test('running agent applies a replacement credential without restart', async () 
       result.writeHead(200, { 'Content-Type': 'application/json' })
       result.end(JSON.stringify({ status: 'ok' }))
     })
-    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state }, stdio: 'ignore' })
+    const child = spawn(process.execPath, [agentEntry, '--background', '--interval', '1000', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state, DMW_STUB_METRICS: '1', NODE_ENV: 'test' }, stdio: 'ignore' })
     try {
       fs.writeFileSync(path.join(state, 'credentials.json'), JSON.stringify({ serverUrl: url, deviceId: 1, apiKey: 'initial-key' }))
       await new Promise((resolve, reject) => {
@@ -397,10 +418,34 @@ test('running agent applies a replacement credential without restart', async () 
       await Promise.race([newKeySeen, new Promise((_, reject) => setTimeout(() => reject(new Error('replacement heartbeat not received')), 5000))])
     } finally {
       child.kill('SIGTERM')
-      await new Promise((resolve) => child.once('exit', resolve))
+      await Promise.race([
+        new Promise((resolve) => child.once('exit', resolve)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('child did not exit')), 10000)),
+      ])
       await new Promise((resolve) => server.close(resolve))
     }
     assert.ok(keys.includes('Bearer initial-key'))
     assert.ok(keys.includes('Bearer replacement-key'))
+  })
+})
+
+test('a saved/env heartbeat interval above the max is clamped instead of rejected', async () => {
+  await withStateDir(async (state) => {
+    const child = spawn(process.execPath, [agentEntry, '--background', '--no-update'], { env: { ...process.env, DMW_STATE_DIR: state, DMW_HEARTBEAT_INTERVAL_MS: '999999' }, stdio: 'ignore' })
+    try {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('settings.json not written')), 5000)
+        const wait = setInterval(() => {
+          if (fs.existsSync(path.join(state, 'settings.json'))) { clearTimeout(timeout); clearInterval(wait); resolve() }
+        }, 20)
+      })
+      assert.equal(JSON.parse(fs.readFileSync(path.join(state, 'settings.json'), 'utf8')).interval, 20000)
+    } finally {
+      child.kill('SIGTERM')
+      await Promise.race([
+        new Promise((resolve) => child.once('exit', resolve)),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('child did not exit')), 10000)),
+      ])
+    }
   })
 })

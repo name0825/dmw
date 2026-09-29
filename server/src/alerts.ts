@@ -5,7 +5,7 @@ import {
   STATUS_OFFLINE,
 } from './config/constants.js'
 
-export type AlertLevel = 'info' | 'warning' | 'critical'
+type AlertLevel = 'info' | 'warning' | 'critical'
 
 export type DeviceAlert = {
   deviceId: number

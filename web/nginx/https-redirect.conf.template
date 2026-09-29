@@ -1,0 +1,18 @@
+server {
+  listen ${WEB_DEV_PORT};
+  server_name _;
+
+  location /api/ {
+    return 403;
+  }
+
+  location /ws {
+    return 403;
+  }
+
+  location / {
+    return 301 https://$host:${WEB_HTTPS_PORT}$request_uri;
+  }
+}
+
+include /etc/nginx/conf.d/https/*.conf;

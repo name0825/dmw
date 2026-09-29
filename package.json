@@ -13,6 +13,6 @@
     "build": "npm --workspace server run build && npm --workspace web run build",
     "start": "npm --workspace server run start",
     "agent": "node agent/src/index.js",
-    "test": "npm --workspace server run build && node --test server/dist/**/*.test.js && node --test agent/test/*.test.js"
+    "test": "npm --workspace server run build && node --test \"server/dist/**/*.test.js\" && node --test agent/test/*.test.js"
   }
 }

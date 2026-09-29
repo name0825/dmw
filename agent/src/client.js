@@ -1,5 +1,6 @@
 import { requestJson } from './http.js'
 import { getSelfNetworkInfo } from './network.js'
+import { currentVersion } from './update.js'
 
 export const pairWithServer = async (serverUrl, pairingCode, name) => {
   const netInfo = getSelfNetworkInfo()
@@ -24,7 +25,7 @@ export const sendHeartbeat = (serverUrl, apiKey, metrics) =>
   requestJson(`${serverUrl}/agent/heartbeat`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(metrics),
+    body: JSON.stringify({ ...metrics, agentVersion: currentVersion }),
   })
 
 export const unpairFromServer = (serverUrl, apiKey) =>

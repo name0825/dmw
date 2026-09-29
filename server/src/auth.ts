@@ -28,7 +28,7 @@ export const PUBLIC_ROUTE_PATHS = new Set([
  * @param rawPath - Raw URL or path that may include query/fragment
  * @returns Normalized pathname starting with '/'
  */
-export const normalizeRequestPath = (rawPath = ''): string => {
+const normalizeRequestPath = (rawPath = ''): string => {
   const value = (rawPath || '').trim()
   if (!value) return '/'
   const pathname = value.split('?')[0].split('#')[0]
@@ -49,7 +49,7 @@ export const isPublicRoute = (rawPath = '/'): boolean =>
  * @param headerValue - Raw Authorization header value
  * @returns JWT token string, or empty string if not present
  */
-export const extractBearerToken = (headerValue = ''): string => {
+const extractBearerToken = (headerValue = ''): string => {
   const candidate = (headerValue || '').trim()
   if (!candidate) return ''
   if (!candidate.startsWith('Bearer ')) return ''

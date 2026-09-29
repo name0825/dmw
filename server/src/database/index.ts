@@ -28,6 +28,7 @@ export const initPool = async (): Promise<any> => {
     filename: DB_PATH,
     driver: sqlite3.Database,
   }) as any
+  await db.run('PRAGMA foreign_keys = ON')
   await initDb(db)
   await ensureAdmin(db)
   pool = db

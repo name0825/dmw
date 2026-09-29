@@ -7,7 +7,7 @@ import { parseArgs, resolvePairingInput } from './config.js'
 import { loadCredentials, saveCredentials, clearCredentials, acquireLock, readState, writeState, getStateDir } from './credentials.js'
 import { pairWithServer, sendHeartbeat, unpairFromServer } from './client.js'
 import { collectMetrics } from './metrics/index.js'
-import { sleep } from './retry.js'
+import { sleep, computeBackoffDelay } from './retry.js'
 import { HttpError } from './http.js'
 import { configureAutostart, ensureAutostart, installLauncher } from './autostart.js'
 import { checkForUpdate } from './update.js'
@@ -18,7 +18,7 @@ const HELP_TEXT = `dmw-agent - DMW 장치 관리 에이전트
   --server <url>         서버 주소
   --code <code>          페어링 코드
   --name <name>          이 장치의 표시 이름
-  --interval <ms>        heartbeat 주기 (기본 10000, 최소 1000)
+  --interval <ms>        heartbeat 주기 (기본 10000, 최소 1000, 최대 20000)
   --unpair               서버에서 페어링 해제 후 종료
   --repair, --reset      기존 서버에서 해제 후 새 서버에 페어링
   --force               해제 요청 실패 시 로컬 연결만 해제 (원격 키는 남을 수 있음)
@@ -71,6 +71,8 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
   let lastKey
   let nextUpdate = 0
   let updateTask
+  let consecutiveFailures = 0
+  let nextDelay = intervalMs
   const stop = () => { running = false }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
@@ -83,18 +85,28 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
           if (updated && running) { console.log('업데이트 설치 완료. 새 버전으로 다시 시작합니다.'); process.exitCode = 75; running = false }
         }).catch((error) => console.warn(`업데이트 확인 실패: ${error.message}. 현재 버전을 계속 사용합니다.`))
       }
-      if (credentials && (credentials.apiKey !== lastKey || Date.now() - lastHeartbeat >= intervalMs)) {
+      const keyChanged = credentials && credentials.apiKey !== lastKey
+      if (credentials && (keyChanged || Date.now() - lastHeartbeat >= nextDelay)) {
+        if (keyChanged) { consecutiveFailures = 0; nextDelay = intervalMs }
         lastHeartbeat = Date.now()
         lastKey = credentials.apiKey
         try {
           const metrics = await collectMetrics()
           if (loadCredentials()?.apiKey === credentials.apiKey) await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+          consecutiveFailures = 0
+          nextDelay = intervalMs
         } catch (error) {
           if (error instanceof HttpError && [401, 403].includes(error.status)) {
             const release = acquireLock('pairing')
-            if (release) { try { clearCredentials(credentials) } finally { release() } }
+            if (release) {
+              try { clearCredentials(credentials) } catch (clearError) { console.warn(`[heartbeat] 로컬 인증 정보 삭제 실패: ${clearError.message}`) } finally { release() }
+            }
             console.error('서버 인증이 해제되었습니다. --repair로 다시 페어링하세요.')
-          } else console.warn(`[heartbeat] 전송 실패: ${error.message}`)
+          } else {
+            consecutiveFailures += 1
+            nextDelay = computeBackoffDelay(intervalMs, consecutiveFailures)
+            console.warn(`[heartbeat] 전송 실패 (재시도 ${consecutiveFailures}회, 다음 시도까지 약 ${Math.round(nextDelay / 1000)}초): ${error.message}`)
+          }
         }
       }
       if (running) await sleep(1000)
@@ -132,8 +144,12 @@ const main = async () => {
     return
   }
   if (args.update) { installLauncher(); console.log(await checkForUpdate() ? '업데이트 설치 완료. 다음 실행에 적용됩니다.' : '새 업데이트가 없습니다.'); return }
-  const interval = Number(args.interval || process.env.DMW_HEARTBEAT_INTERVAL_MS || readState('settings.json')?.interval || 10000)
+  let interval = Number(args.interval || process.env.DMW_HEARTBEAT_INTERVAL_MS || readState('settings.json')?.interval || 10000)
   if (!Number.isFinite(interval) || interval < 1000) throw new Error('heartbeat 주기는 1000ms 이상이어야 합니다.')
+  if (interval > 20000) {
+    console.warn(`heartbeat 주기는 최대 20000ms까지 지원합니다. 저장된 값(${interval}ms)을 20000ms로 조정합니다.`)
+    interval = 20000
+  }
   writeState('settings.json', { ...readState('settings.json'), interval })
   await ensureCredentials(args)
   installLauncher()

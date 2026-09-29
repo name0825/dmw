@@ -27,7 +27,6 @@ export const registerAuthRoutes = (app: any) => {
 // ============================================================================
 
 import bcrypt from 'bcryptjs'
-import { ADMIN_EMAIL } from '../config.js'
 import { getDb, withTransaction } from '../database/index.js'
 import { createToken } from '../auth.js'
 import {
@@ -104,15 +103,17 @@ const rotateRefreshToken = async (row: any, tx: any) => {
   }
 
   const user = await tx.get('SELECT id, email, token_version FROM users WHERE id = ?', [row.user_id])
-  // NOTE: Falls back to ADMIN_EMAIL if user row no longer exists (preserves existing behavior)
-  const email = user?.email || ADMIN_EMAIL
+  if (!user) {
+    await revokeRefreshToken(row.id, tx)
+    return { status: 'invalid' as const }
+  }
 
   const successor = await issueRefreshToken(row.user_id, tx)
   await revokeRefreshToken(row.id, tx, successor.id)
 
   return {
     status: 'ok' as const,
-    accessToken: createToken(email, user?.token_version ?? 0),
+    accessToken: createToken(user.email, user.token_version ?? 0),
     refreshToken: successor.token,
   }
 }

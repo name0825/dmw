@@ -2,10 +2,13 @@ import { registerAuthRoutes } from './routes/auth.js'
 import { registerDeviceRoutes } from './routes/devices.js'
 import { registerAgentRoutes } from './routes/agent.js'
 import { registerPairingRoutes } from './routes/pairing.js'
+import { registerSshRoutes } from './routes/ssh.js'
+import { pruneCommandRuns } from './services/ssh.js'
 import { monitorAlerts, updateOfflineStates } from './services/monitoring.js'
+import { pruneExpiredRefreshTokens } from './database/auth.js'
+import { MONITOR_INTERVAL_MS } from './config/constants.js'
 
-// 백그라운드 모니터링 주기 (10초)
-const MONITOR_INTERVAL_MS = 10 * 1000
+const PRUNE_INTERVAL_MS = 60 * 60 * 1000
 
 /**
  * 모든 HTTP 라우트를 등록한다.
@@ -20,9 +23,11 @@ export const registerRoutes = async (app: any) => {
   registerDeviceRoutes(app)
   registerAgentRoutes(app)
   registerPairingRoutes(app)
+  registerSshRoutes(app)
 
   // NOTE: 핸들러는 unref하지 않는다. 기존 동작상 서버 프로세스가
   // 스케줄러로 유지되는 것을 전제로 하며, 변경 시 프로세스 수명 주기가 바뀐다.
+  let lastPruneAt = 0
   setInterval(() => {
     // 루프는 계속 돌아야 하므로 다시 throw 하지 않지만, DB 장애 등이
     // 조용히 묻히지 않도록 로그는 반드시 남긴다.
@@ -32,5 +37,14 @@ export const registerRoutes = async (app: any) => {
     monitorAlerts().catch((error) => {
       console.error('Error monitoring alerts:', error)
     })
+    if (Date.now() - lastPruneAt >= PRUNE_INTERVAL_MS) {
+      lastPruneAt = Date.now()
+      pruneExpiredRefreshTokens().catch((error) => {
+        console.error('Error pruning expired refresh tokens:', error)
+      })
+      pruneCommandRuns().catch((error) => {
+        console.error('Error pruning command runs:', error)
+      })
+    }
   }, MONITOR_INTERVAL_MS)
 }

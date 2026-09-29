@@ -16,7 +16,7 @@ import { getDb } from '../database/index.js'
  * A second collision is astronomically unlikely and is left to the caller's 500
  * handler — retrying in a loop would only hide a real constraint problem.
  */
-export const insertPairingCode = async (db: any, expiresAt: string, targetDeviceId: number | null = null): Promise<string> => {
+const insertPairingCode = async (db: any, expiresAt: string, targetDeviceId: number | null = null): Promise<string> => {
   for (let attempt = 0; ; attempt++) {
     const code = randomBytes(4).toString('hex').toUpperCase()
     try {

@@ -1,22 +1,59 @@
+import os from 'node:os'
 import wol from 'wake_on_lan'
 
 import { WOL_BROADCAST_ADDRESS } from '../config.js'
 import { WOL_PORT } from '../config/constants.js'
 import { isValidIp } from '../utils/validation.js'
 
+const ipToLong = (ipv4: string): number =>
+  ipv4.split('.').reduce((acc, octet) => (acc << 8) + Number(octet), 0) >>> 0
+
+const longToIp = (long: number): string =>
+  [(long >>> 24) & 0xff, (long >>> 16) & 0xff, (long >>> 8) & 0xff, long & 0xff].join('.')
+
+const warnedFallbackIps = new Set<string>()
+
 /**
  * IPv4 주소의 서브넷 브로드캐스트 주소를 계산한다.
- * 가정: /24 네트워크 (DMW가 관리하는 LAN 환경 기준).
+ * 실제 네트워크 인터페이스 목록에서 대상 IP 와 같은 서브넷(주소 & 넷마스크)에
+ * 속하는, internal 이 아닌 IPv4 인터페이스를 찾아 그 넷마스크로 브로드캐스트
+ * 주소를 유도한다. 일치하는 인터페이스가 없으면(대상이 다른 서브넷에 있는
+ * 경우) /24 를 가정하던 이전 방식으로 되돌아가고, WOL_BROADCAST_ADDRESS 설정을
+ * 권장하는 경고를 한 번 출력한다.
  * @param {string} ipv4 - 예: '192.168.0.20'
+ * @param {NodeJS.Dict<os.NetworkInterfaceInfo[]>} [interfaces] - 테스트 주입용. 기본값은 os.networkInterfaces()
  * @returns {string} 브로드캐스트 주소, 예: '192.168.0.255'
  */
-export const subnetBroadcast = (ipv4: string): string =>
-  `${ipv4.split('.').slice(0, 3).join('.')}.255`
+export const subnetBroadcast = (
+  ipv4: string,
+  interfaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os.networkInterfaces()
+): string => {
+  const target = ipToLong(ipv4)
+
+  for (const infos of Object.values(interfaces)) {
+    for (const info of infos ?? []) {
+      if (info.internal || info.family !== 'IPv4') continue
+      const address = ipToLong(info.address)
+      const netmask = ipToLong(info.netmask)
+      if ((address & netmask) === (target & netmask)) {
+        return longToIp((address & netmask) | (~netmask >>> 0))
+      }
+    }
+  }
+
+  if (!warnedFallbackIps.has(ipv4)) {
+    warnedFallbackIps.add(ipv4)
+    console.warn(
+      `No local network interface matches the subnet of ${ipv4}; assuming a /24 network for the WOL broadcast address. Set WOL_BROADCAST_ADDRESS to avoid this.`
+    )
+  }
+  return `${ipv4.split('.').slice(0, 3).join('.')}.255`
+}
 
 /**
  * WOL 패킷을 보낼 브로드캐스트 주소를 결정한다.
- * WOL_BROADCAST_ADDRESS 가 설정돼 있으면 그 값을 쓰고, 없으면 /24 를 가정해
- * 대상 기기 IP 에서 유도한다.
+ * WOL_BROADCAST_ADDRESS 가 설정돼 있으면 그 값을 쓰고, 없으면 대상 기기 IP 와
+ * 로컬 네트워크 인터페이스의 넷마스크로 유도한다 (subnetBroadcast 참고).
  * @param {string} ipv4 - 대상 기기의 IPv4 주소
  * @returns {string} 브로드캐스트 주소
  * @throws {Error} WOL_BROADCAST_ADDRESS 가 유효한 IPv4 가 아닐 때
