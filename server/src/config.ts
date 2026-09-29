@@ -62,6 +62,12 @@ export const JWT_SECRET = process.env.JWT_SECRET || (APP_ENV === 'production' ? 
 export const DB_PATH = process.env.DB_PATH || path.join(process.cwd(), 'data', 'dmw.db')
 
 /**
+ * Path to the server's SSH private key used for remote command execution.
+ * Generated on first use. Defaults to an 'ssh' directory next to the database file.
+ */
+export const SSH_KEY_PATH = process.env.SSH_KEY_PATH || path.join(path.dirname(DB_PATH), 'ssh', 'dmw_ed25519')
+
+/**
  * Admin account email. Defaults to 'admin@dmw.local' if ADMIN_EMAIL is not set.
  */
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@dmw.local'

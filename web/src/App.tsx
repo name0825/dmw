@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react'
 
 import { getApiBaseUrl, getWebSocketBaseUrl } from './api'
+import SshPanel from './SshPanel'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceSocket } from './hooks/useDeviceSocket'
 import { useDevices } from './hooks/useDevices'
@@ -13,6 +14,7 @@ import type { Device, DeviceHistoryEntry, PairingInfo } from './types'
 export default function App() {
   const [message, setMessage] = useState('')
   const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
+  const [sshOpenId, setSshOpenId] = useState<number | null>(null)
 
   const apiBase = getApiBaseUrl()
   const wsBase = getWebSocketBaseUrl()
@@ -290,12 +292,14 @@ export default function App() {
                     <div className="device-meta">
                       <span className={`badge ${String(device.status).toLowerCase()}`}>{device.status}</span>
                       <span>{device.agent_paired ? 'Paired' : 'Not Paired'}</span>
+                      {device.agent_version && <span>에이전트 v{device.agent_version}</span>}
                     </div>
                     <div className="device-actions">
                       <button onClick={() => editDevice(device)}>수정</button>
                       <button className="secondary" onClick={() => deleteDevice(device.id)} disabled={pendingIds.has(device.id)}>삭제</button>
                       <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>Wake</button>
                       <button className="secondary" onClick={() => loadHistory(device.id)}>History</button>
+                      <button className="secondary" onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}>SSH</button>
                       {device.agent_paired && (
                         <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>
                       )}
@@ -327,6 +331,9 @@ export default function App() {
                         ))}
                       </div>
                     ) : null}
+                    {sshOpenId === device.id && (
+                      <SshPanel device={device} apiBase={apiBase} authedRequest={authedRequest} />
+                    )}
                   </div>
                 ))
               )}

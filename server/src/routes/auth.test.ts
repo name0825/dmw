@@ -210,7 +210,12 @@ test('refresh token whose user row was deleted is rejected without issuing new t
   )
   const userId = inserted.lastID as number
   const { token } = await issueRefreshToken(userId, db)
-  await db.run('DELETE FROM users WHERE id = ?', [userId])
+  await db.run('PRAGMA foreign_keys = OFF')
+  try {
+    await db.run('DELETE FROM users WHERE id = ?', [userId])
+  } finally {
+    await db.run('PRAGMA foreign_keys = ON')
+  }
 
   const refreshReply = reply()
   await handleRefresh(requestWithCookie(token), refreshReply)

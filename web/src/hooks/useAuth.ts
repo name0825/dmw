@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { authorizedRequest, requestJson } from '../api'
 
@@ -24,10 +24,13 @@ export const useAuth = (
   /**
    * Clear local session state without contacting the server.
    */
-  const clearSession = () => {
+  const onSessionClearedRef = useRef(onSessionCleared)
+  onSessionClearedRef.current = onSessionCleared
+
+  const clearSession = useCallback(() => {
     setToken('')
-    onSessionCleared()
-  }
+    onSessionClearedRef.current()
+  }, [])
 
   /**
    * Restore the session using the refresh-token cookie when present.
@@ -35,7 +38,7 @@ export const useAuth = (
    * network error (fetch itself throws), since only the former should log the user out.
    * @returns {Promise<RefreshResult>} The outcome of the refresh attempt.
    */
-  const refreshSession = async (): Promise<RefreshResult> => {
+  const refreshSession = useCallback(async (): Promise<RefreshResult> => {
     let res: Response
     let data: any
 
@@ -56,20 +59,20 @@ export const useAuth = (
     }
 
     return { status: 'network-error' }
-  }
+  }, [apiBase])
 
   /**
    * Perform a fetch with the current access token, transparently refreshing
    * the session and retrying once when the server responds with 401.
    */
-  const authedRequest = (url: string, init: RequestInit = {}) => (
+  const authedRequest = useCallback((url: string, init: RequestInit = {}) => (
     authorizedRequest(url, init, token, async () => {
       const result = await refreshSession()
       if (result.status === 'ok') return result.token
       if (result.status === 'auth-failed') clearSession()
       return null
     })
-  )
+  ), [token, refreshSession, clearSession])
 
   /**
    * Authenticate with the admin username and password.

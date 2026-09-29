@@ -2,6 +2,8 @@ import { registerAuthRoutes } from './routes/auth.js'
 import { registerDeviceRoutes } from './routes/devices.js'
 import { registerAgentRoutes } from './routes/agent.js'
 import { registerPairingRoutes } from './routes/pairing.js'
+import { registerSshRoutes } from './routes/ssh.js'
+import { pruneCommandRuns } from './services/ssh.js'
 import { monitorAlerts, updateOfflineStates } from './services/monitoring.js'
 import { pruneExpiredRefreshTokens } from './database/auth.js'
 import { MONITOR_INTERVAL_MS } from './config/constants.js'
@@ -21,6 +23,7 @@ export const registerRoutes = async (app: any) => {
   registerDeviceRoutes(app)
   registerAgentRoutes(app)
   registerPairingRoutes(app)
+  registerSshRoutes(app)
 
   // NOTE: 핸들러는 unref하지 않는다. 기존 동작상 서버 프로세스가
   // 스케줄러로 유지되는 것을 전제로 하며, 변경 시 프로세스 수명 주기가 바뀐다.
@@ -38,6 +41,9 @@ export const registerRoutes = async (app: any) => {
       lastPruneAt = Date.now()
       pruneExpiredRefreshTokens().catch((error) => {
         console.error('Error pruning expired refresh tokens:', error)
+      })
+      pruneCommandRuns().catch((error) => {
+        console.error('Error pruning command runs:', error)
       })
     }
   }, MONITOR_INTERVAL_MS)

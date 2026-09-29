@@ -6,12 +6,12 @@ import { getDb } from './index.js'
 /**
  * 리프레시 토큰 유효기간 (7 일). 쿠키 maxAge 와 DB expires_at 에 동일하게 사용됨.
  */
-export const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
+const REFRESH_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000
 
 /**
  * Lookup ID 길이 (16 자) — refresh token 의 빠른 인덱스 조회를 위한 접두.
  */
-export const REFRESH_LOOKUP_LEN = 16
+const REFRESH_LOOKUP_LEN = 16
 
 /**
  * 회전 직후 유예 창 (30 초).
@@ -185,7 +185,7 @@ export const bumpTokenVersion = async (userId: number, db: any = getDb()): Promi
  * @param refreshToken - 64 자 리프레시 토큰
  * @returns 16 자 lookup_id 접두
  */
-export const getRefreshLookupId = (refreshToken: string): string =>
+const getRefreshLookupId = (refreshToken: string): string =>
   (refreshToken.slice(0, REFRESH_LOOKUP_LEN) || '').toLowerCase().trim()
 
 /**

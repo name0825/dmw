@@ -1,4 +1,4 @@
-import { PAIRING_CODE_RATE_LIMIT_MAX } from '../config/constants.js'
+import { PAIRING_CODE_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
 import * as pairingService from '../services/pairing.js'
 
 // ============================================================================
@@ -11,7 +11,7 @@ import * as pairingService from '../services/pairing.js'
  * @param app - Fastify app instance
  */
 export const registerPairingRoutes = (app: any) => {
-  app.post('/pairing-codes', { config: { rateLimit: { max: PAIRING_CODE_RATE_LIMIT_MAX, timeWindow: '1 minute' } } }, async (request: any, reply: any) => {
+  app.post('/pairing-codes', { config: { rateLimit: { max: PAIRING_CODE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
     return await pairingService.handleCreatePairingCode(request, reply)
   })
 }

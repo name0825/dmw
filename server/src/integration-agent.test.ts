@@ -11,6 +11,7 @@ process.env.DB_PATH = path.join(databaseDirectory, 'dmw.db')
 
 const { initPool, closePool, getDb } = await import('./database/index.js')
 const { API_KEY_HINT_LEN } = await import('./services/agent.js')
+const { handleGetDevices } = await import('./services/devices.js')
 const { updateOfflineStates } = await import('./services/monitoring.js')
 const { authMiddleware } = await import('./middleware/auth.js')
 const { isPublicRoute } = await import('./auth.js')
@@ -100,6 +101,38 @@ test('a heartbeat stores CPU, memory, and disk usage', async () => {
       [deviceId],
     )
     assert.deepEqual(metrics, { cpu_usage: 42, memory_usage: 55, disk_usage: 60 })
+  } finally {
+    await app.close()
+  }
+})
+
+test('a heartbeat stores agentVersion and a later heartbeat without a valid one keeps it', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'version-agent-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+    const send = (payload?: Record<string, unknown>) =>
+      app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: `Bearer ${apiKey}` }, payload })
+    const stored = async () =>
+      (await getDb().get('SELECT agent_version FROM devices WHERE id = ?', [deviceId])).agent_version
+
+    assert.equal((await send({ cpuUsage: 1 })).statusCode, 200)
+    assert.equal(await stored(), null)
+
+    assert.equal((await send({ agentVersion: ' 1.2.3 ' })).statusCode, 200)
+    assert.equal(await stored(), '1.2.3')
+
+    let listed: any
+    await handleGetDevices({}, { send: (body: unknown) => { listed = body } })
+    assert.equal(listed.devices[0].agent_version, '1.2.3')
+
+    for (const invalid of ['not a version', '1.2.3\n<script>', 'v'.repeat(40), 123, null, {}]) {
+      assert.equal((await send({ agentVersion: invalid })).statusCode, 200)
+      assert.equal(await stored(), '1.2.3')
+    }
+
+    assert.equal((await send({ agentVersion: '1.3.0-beta.1' })).statusCode, 200)
+    assert.equal(await stored(), '1.3.0-beta.1')
   } finally {
     await app.close()
   }

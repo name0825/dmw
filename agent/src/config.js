@@ -20,7 +20,7 @@ export const parseArgs = (argv) => {
   return args
 }
 
-export const normalizeServerUrl = (input) => {
+const normalizeServerUrl = (input) => {
   const trimmed = input.trim()
   const withScheme = /^https?:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`
   const url = new URL(withScheme)

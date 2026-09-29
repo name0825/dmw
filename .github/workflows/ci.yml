@@ -23,3 +23,55 @@ jobs:
       - run: npx tsc --noEmit -p web/tsconfig.json
       - run: npm --workspace web run build
       - run: node --test agent/test/*.test.js
+
+  docker:
+    runs-on: ubuntu-latest
+    env:
+      ADMIN_EMAIL: admin@dmw.local
+      ADMIN_PASSWORD: ci-admin-password-123
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create .env
+        run: |
+          {
+            echo "JWT_SECRET=ci-test-jwt-secret-0123456789abcdef0123456789abcdef"
+            echo "ADMIN_EMAIL=$ADMIN_EMAIL"
+            echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
+          } > .env
+      - run: docker compose up -d --build server
+      - name: Wait for server health
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3001/health && exit 0
+            sleep 2
+          done
+          docker compose logs server
+          exit 1
+      - name: Create a device
+        run: |
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3001/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" '{email:$e,password:$p}')" | jq -er .accessToken)
+          curl -fsS -X POST http://127.0.0.1:3001/devices \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"name":"CI Device","mac_address":"AA:BB:CC:DD:EE:99","ip_address":"192.168.1.99"}'
+      - run: docker compose restart server
+      - name: Wait for server health after restart
+        run: |
+          for i in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:3001/health && exit 0
+            sleep 2
+          done
+          docker compose logs server
+          exit 1
+      - name: Device persists after restart
+        run: |
+          TOKEN=$(curl -fsS -X POST http://127.0.0.1:3001/auth/login \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg e "$ADMIN_EMAIL" --arg p "$ADMIN_PASSWORD" '{email:$e,password:$p}')" | jq -er .accessToken)
+          curl -fsS http://127.0.0.1:3001/devices -H "Authorization: Bearer $TOKEN" \
+            | jq -e '.devices | any(.name == "CI Device")'
+      - if: failure()
+        run: docker compose logs
+      - if: always()
+        run: docker compose down -v

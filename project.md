@@ -5,7 +5,8 @@
 - **프로젝트명**: DMW (Device Manager Web)
 - **한 줄 요약**: 홈 네트워크 상의 디바이스들을 웹 UI에서 한 번에 관리하고, WOL과 실시간 리소스 모니터링을 제공하는 개인용 디바이스 관리 웹 서비스
 - **시작일 / 목표 완료일**: '26. 08. 14. / '26. 09. 04.
-- **버전**: v0.4
+- **버전**: v0.6
+- **구현 갭 / 실행 방법**: 남은 구현 갭은 `IMPLEMENTATION_GAPS.md`, 실행/배포 방법은 `README.md` 참고
 
 ---
 
@@ -73,7 +74,7 @@ DMW는 이를 하나의 웹 UI로 통합하여 다음 작업을 간단하게 수
 
 ### 보류 목표 (P2)
 
-1. SSH 기반 원격 명령 실행 (보류)
+1. SSH 기반 원격 명령 실행 (구현됨: 서버 ssh2 직접 접속, 관리자 비밀번호 재입력 필요)
 
 ### 하지 않을 것 (Non-goals)
 
@@ -190,7 +191,7 @@ Wake 요청 이후:
 | P1 | 상태 이력 그래프 | 시간별 CPU / MEM / Disk 추이 표시 | 완료 |
 | P1 | 이력 보존 정책 | 상태 이력 최대 7일 보존 후 자동 삭제 | 완료 |
 | P1 | 알림 기능 | OFFLINE / 리소스 임계치 초과 시 알림 | 완료 |
-| P2 | SSH 원격 명령 | 재부팅 등 간단한 원격 명령 실행 | 보류 |
+| P2 | SSH 원격 명령 | 재부팅 등 간단한 원격 명령 실행 | 구현됨 (실기기 수동 검증 대기) |
 
 ### 상태 판정 기준
 
@@ -230,6 +231,8 @@ agentVersion
   "agentVersion": "0.4.0"
 }
 ```
+
+> **실제 구현 상태(구현 미비)**: Agent가 `POST /agent/heartbeat`로 실제 전송하는 값은 `cpuUsage` / `memoryUsage` / `diskUsage`뿐이다. `deviceId`는 요청 바디가 아닌 API Key로 서버가 식별하고, `timestamp`는 Agent가 보내는 값이 아니라 서버가 수신한 시각을 기록한다. `agentVersion`은 전송/저장되지 않는다.
 
 ### 서버에서 관리하는 상태
 
@@ -333,9 +336,10 @@ API Key 검증
 - **WOL**: `wake_on_lan` 또는 직접 UDP 매직 패킷 구현
 - **Agent 상태 수집**: `systeminformation`
 - **인증**: `bcrypt` + `jsonwebtoken`
-- **SSH**: `ssh2` (P2)
-- **배포**: Docker
+- **SSH**: `ssh2` (P2, 구현됨)
+- **배포**: Docker Compose (`network_mode: host`, 서버는 `BIND_HOST=127.0.0.1`로 로컬에만 바인딩하고 web 컨테이너의 nginx가 `/api/` → `127.0.0.1:3001`, `/ws` → `127.0.0.1:3002`로 프록시). HTTPS는 `docker-compose.https.yml`을 함께 적용하는 옵션(기본 `WEB_HTTPS_PORT=8443`, `COOKIE_SECURE=true`)으로 제공한다.
 - **호스트**: Mac Mini M2 8GB
+- **Agent 자동 업데이트/자동 시작**: Agent는 GitHub Releases 기반 자체 업데이트(`agent/src/update.js`, `.github/workflows/agent-release.yml`)와 OS 자동 시작 등록(`agent/src/autostart.js`)을 지원한다.
 
 ### 시스템 구조
 
@@ -379,27 +383,44 @@ API Key 검증
 
 ### 내부 서버 구조
 
-구현 시 다음과 같은 책임 분리를 기본 구조로 한다.
+구현 시 다음과 같은 책임 분리를 기본 구조로 한다. (아래는 실제 `server/src` 디렉터리 구조다.)
 
 ```text
-src/
+server/src/
 ├── routes/
-│   ├── auth/
-│   ├── devices/
-│   └── agent/
+│   ├── auth.ts
+│   ├── devices.ts
+│   ├── pairing.ts
+│   └── agent.ts
 ├── services/
-│   ├── auth/
-│   ├── device/
-│   ├── pairing/
-│   ├── wol/
-│   └── monitoring/
-├── repositories/
-├── plugins/
-├── websocket/
+│   ├── devices.ts
+│   ├── pairing.ts
+│   ├── agent.ts
+│   ├── wake.ts
+│   ├── monitoring.ts
+│   ├── notifications.ts
+│   └── ws.ts
+├── database/
+│   ├── index.ts
+│   ├── schema.ts
+│   └── auth.ts
+├── middleware/
+│   └── auth.ts
+├── utils/
+│   ├── crypto.ts
+│   └── validation.ts
+├── config/
+│   └── constants.ts
+├── types/
+├── auth.ts
+├── alerts.ts
+├── deviceStatus.ts
+├── config.ts
+├── routes.ts
 └── index.ts
 ```
 
-목표는 HTTP 라우트에 비즈니스 로직을 직접 넣지 않고 Service / Repository 단위로 분리하는 것이다.
+목표는 HTTP 라우트에 비즈니스 로직을 직접 넣지 않고 Service 단위로 분리하는 것이며, 당초 계획했던 별도 `repositories/`, `plugins/` 계층은 두지 않고 `database/`가 그 역할을 겸한다.
 
 ---
 
@@ -423,23 +444,38 @@ POST /auth/logout
 ### 디바이스 관리
 
 ```text
+GET    /dashboard
 GET    /devices
+GET    /devices/:id/history
+GET    /alerts
 POST   /devices
 PATCH  /devices/:id
 DELETE /devices/:id
+POST   /devices/:id/wake
 ```
 
 - `POST /devices` 등록 시 일회용 페어링 코드를 함께 응답으로 반환
+- `GET /devices/:id/history`: 상태 이력(P1) 조회, `GET /alerts`: 알림(P1) 조회, `GET /dashboard`: 대시보드용 요약 데이터 조회
+
+### 페어링 코드 발급
+
+```text
+POST /pairing-codes
+```
+
+- 이미 등록된 디바이스에 대해 재페어링용 코드를 추가 발급할 때 사용
 
 ### Agent 페어링
 
 ```text
 POST /agent/pair
+POST /agent/unpair
 ```
 
 - 서버 IP로 수신한 요청에서 페어링 코드 검증
 - 코드 유효 시 API Key 발급, `agent_paired = true` 기록
 - 코드 만료/불일치 시 거부
+- `POST /agent/unpair`: 페어링 해제(재설치/재페어링 대비)
 
 ### WOL
 
@@ -458,10 +494,18 @@ POST /devices/:id/wake
 POST /agent/heartbeat
 ```
 
-- API Key 검증
+- API Key 검증 (Key로 대상 디바이스 식별)
 - 마지막 heartbeat 갱신
 - CPU / MEM / Disk 최신값을 `device_metrics_latest`에 저장
 - WebSocket 이벤트 발생
+
+### 기타
+
+```text
+GET /health
+```
+
+- 헬스체크용 엔드포인트 (Docker healthcheck에서 사용)
 
 ---
 
@@ -513,14 +557,19 @@ updated_at
 
 ```text
 id
+user_id
 token_hash
+lookup_id
 issued_at
 expires_at
 revoked
+revoked_at
+replaced_by
 ```
 
 - Refresh Token은 평문이 아닌 해시로 저장
-- 로그아웃 또는 탈취 의심 시 `revoked` 처리
+- `lookup_id`로 토큰 조회, `replaced_by`로 회전(rotate) 이력을 추적해 로그아웃 시 후속 세션까지 함께 무효화
+- 로그아웃 또는 탈취 의심 시 `revoked` / `revoked_at` 처리
 
 ### 상태 이력 (P1)
 
@@ -534,8 +583,23 @@ device_metrics_history
   disk_usage
 ```
 
-- 최대 7일 보존
+- 최대 7일 보존 (`HISTORY_RETENTION_MS`, `server/src/services/monitoring.ts`)
 - 주기적인 정리 작업으로 오래된 데이터 삭제
+
+### 알림 (P1, alerts)
+
+```text
+id
+device_id
+level
+metric
+value
+message
+created_at
+```
+
+- OFFLINE / 리소스 임계치 초과 알림 기록을 저장하며 `GET /alerts`로 조회한다
+- 보존 기간: 30일 (`ALERT_RETENTION_MS`)
 
 ---
 
@@ -561,6 +625,7 @@ device_metrics_history
 - OS 종료 방식에 따라 WOL 가능 여부가 달라질 수 있다.
 - 네트워크 장비에서 필요한 브로드캐스트 패킷 전달이 허용되어야 한다.
 - 기본적으로 DMW 서버와 대상 디바이스가 동일한 WOL 가능 네트워크에 존재하는 것을 전제로 한다.
+- 브로드캐스트 주소는 실제 로컬 네트워크 인터페이스의 넷마스크를 기준으로 계산하며, 대상 IP와 일치하는 인터페이스가 없을 때만 경고와 함께 `/24`를 가정한다. `WOL_BROADCAST_ADDRESS` 환경변수로 직접 지정해 이 가정을 우회할 수 있다.
 
 ### Agent
 
@@ -617,7 +682,7 @@ device_metrics_history
 - [x] 페어링 코드는 1회 사용 후 재사용할 수 없다.
 - [x] 디바이스를 수정할 수 있다.
 - [x] 디바이스를 삭제할 수 있다.
-- [ ] 서버 재시작 후 디바이스 정보가 유지된다.
+- [x] 서버 재시작 후 디바이스 정보가 유지된다.
 
 ### WOL
 
@@ -637,15 +702,15 @@ device_metrics_history
 
 ### 실시간 UI
 
-- [ ] Agent가 보낸 최신 상태가 서버에 반영된다.
-- [ ] WebSocket으로 브라우저에 최신 상태가 전달된다.
+- [x] Agent가 보낸 최신 상태가 서버에 반영된다.
+- [x] WebSocket으로 브라우저에 최신 상태가 전달된다.
 - [ ] 브라우저 새로고침 없이 상태가 변경된다.
 
 ### 배포
 
 - [ ] Docker 컨테이너로 실행된다.
 - [ ] 컨테이너 재시작 후 서비스가 정상 복구된다.
-- [ ] 컨테이너 재시작 후 DB 데이터가 유지된다.
+- [ ] 컨테이너 재시작 후 DB 데이터가 유지된다. (CI `docker` 잡 추가, 첫 실행 대기)
 
 ---
 
@@ -667,7 +732,7 @@ device_metrics_history
 - [x] 최신 상태 데이터가 `device_metrics_latest` 별도 테이블에서 관리된다.
 - [x] 웹 UI에서 최신 상태가 WebSocket으로 실시간 반영된다.
 - [ ] Docker 컨테이너로 홈서버에 상시 배포되어 있다.
-- [ ] 서버 / 컨테이너 재시작 후 디바이스 정보가 유지된다.
+- [x] 서버 재시작 후 디바이스 정보가 유지된다. (컨테이너 재시작은 CI `docker` 잡 첫 실행 대기)
 
 ---
 
@@ -680,10 +745,23 @@ device_metrics_history
 - `ssh2`: https://www.npmjs.com/package/ssh2
 - Homepage: https://gethomepage.dev
 - Netdata: https://www.netdata.cloud
+- 남은 구현 갭 목록: `IMPLEMENTATION_GAPS.md`
+- 설치/실행/배포 방법: `README.md`
 
 ---
 
 ## 15. 변경 이력
+
+### v0.6 ('26. 09. 28.)
+
+- 문서를 실제 코드 기준으로 재동기화 (§6~9, §11, §14)
+- §6 heartbeat 페이로드에 실제 구현 상태를 명시: `deviceId`는 API Key로 식별, `timestamp`는 서버 수신 시각 기록, `agentVersion`은 전송/저장되지 않음 (구현 미비)
+- §7 내부 서버 구조를 실제 `server/src` 디렉터리(`database/`, `middleware/`, `utils/`, `config/` 등)에 맞게 수정하고, Docker Compose 배포 구조(`network_mode: host`, nginx 프록시, HTTPS 옵션)와 Agent 자체 업데이트/자동 시작 기능을 추가 기술
+- §8 API 목록에 실제 존재하는 `GET /dashboard`, `GET /devices/:id/history`, `GET /alerts`, `POST /agent/unpair`, `POST /pairing-codes`, `GET /health`를 반영
+- §9 `refresh_tokens`에 `lookup_id`/`replaced_by` 등 실제 컬럼을 반영하고, `alerts` 테이블 설명 추가
+- §11 WOL 브로드캐스트 주소가 실제 인터페이스 넷마스크 기반으로 계산되며 `/24` 가정은 매칭 실패 시의 폴백임을 명시
+- §1, §14에 `IMPLEMENTATION_GAPS.md`, `README.md` 참조 추가
+- §12/§13 체크박스는 자동화된 검증 근거를 찾지 못해 변경하지 않음 (현재 server 87건, agent 20건의 자동 테스트가 `npm test`로 통과하나, 재시작 유지/실시간 UI/배포 항목을 직접 검증하는 자동화는 없음)
 
 ### v0.5 ('26. 09. 16.)
 

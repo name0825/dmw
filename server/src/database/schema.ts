@@ -25,6 +25,7 @@ export const initDb = async (db: Database): Promise<void> => {
       agent_paired INTEGER NOT NULL DEFAULT 0,
       paired_at TEXT,
       last_seen TEXT,
+      agent_version TEXT,
       status TEXT NOT NULL DEFAULT 'NOT_PAIRED',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -89,6 +90,38 @@ export const initDb = async (db: Database): Promise<void> => {
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
 
+    CREATE TABLE IF NOT EXISTS command_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      device_id INTEGER,
+      device_name TEXT,
+      user_id INTEGER,
+      command TEXT NOT NULL,
+      exit_code INTEGER,
+      signal TEXT,
+      stdout TEXT,
+      stderr TEXT,
+      truncated INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      started_at TEXT NOT NULL,
+      finished_at TEXT,
+      FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE SET NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS ssh_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      event TEXT NOT NULL,
+      user_id INTEGER,
+      device_id INTEGER,
+      old_username TEXT,
+      old_port INTEGER,
+      old_fingerprint TEXT,
+      new_username TEXT,
+      new_port INTEGER,
+      new_fingerprint TEXT,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_command_runs_device_started ON command_runs(device_id, started_at);
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user_id ON refresh_tokens(user_id);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_devices_agent_key_hint ON devices(agent_key_hint);
     CREATE UNIQUE INDEX IF NOT EXISTS idx_refresh_tokens_lookup_id ON refresh_tokens(lookup_id);
@@ -121,6 +154,20 @@ const migrateSchema = async (db: Database): Promise<void> => {
   }
   if (!refreshColumns.some((column) => column.name === 'replaced_by')) {
     await db.exec('ALTER TABLE refresh_tokens ADD COLUMN replaced_by INTEGER')
+  }
+
+  const deviceColumns = await db.all<{ name: string }[]>('PRAGMA table_info(devices)')
+  if (!deviceColumns.some((column) => column.name === 'agent_version')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN agent_version TEXT')
+  }
+  if (!deviceColumns.some((column) => column.name === 'ssh_username')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN ssh_username TEXT')
+  }
+  if (!deviceColumns.some((column) => column.name === 'ssh_port')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN ssh_port INTEGER')
+  }
+  if (!deviceColumns.some((column) => column.name === 'ssh_host_key')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN ssh_host_key TEXT')
   }
 
   // 순서 주의: 테이블을 재생성하면 인덱스도 함께 사라지므로,

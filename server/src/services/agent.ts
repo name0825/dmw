@@ -30,7 +30,7 @@ class PairingCodeDeviceMismatchError extends Error {}
  * @param authHeader - The raw Authorization header value
  * @returns API key string (empty if not found)
  */
-export const extractApiKey = (authHeader: string): string => {
+const extractApiKey = (authHeader: string): string => {
   if (!authHeader.startsWith('Bearer ')) return ''
   return authHeader.slice('Bearer '.length)
 }
@@ -40,7 +40,7 @@ export const extractApiKey = (authHeader: string): string => {
  * @param body - Request body
  * @returns Object with pairingCode, macAddress, ipAddress and optional name
  */
-export const extractPairRequest = (body: any) => {
+const extractPairRequest = (body: any) => {
   const { pairingCode, macAddress, ipAddress, name } = (body || {}) as {
     pairingCode?: string
     macAddress?: string
@@ -60,7 +60,7 @@ export const extractPairRequest = (body: any) => {
  * @param body - Request body
  * @returns Object with cpuUsage, memoryUsage, diskUsage, or null if missing
  */
-export const extractHeartbeatMetrics = (body: any) => {
+const extractHeartbeatMetrics = (body: any) => {
   const { cpuUsage, memoryUsage, diskUsage } = (body || {}) as {
     cpuUsage?: number
     memoryUsage?: number
@@ -71,6 +71,21 @@ export const extractHeartbeatMetrics = (body: any) => {
     memoryUsage: memoryUsage ?? undefined,
     diskUsage: diskUsage ?? undefined,
   }
+}
+
+const AGENT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
+
+/**
+ * Extracts the optional agentVersion from a heartbeat request body.
+ * 형식이 잘못되었거나 없으면 거절하지 않고 null 로 무시한다 (구버전 에이전트 호환).
+ * @param body - Request body
+ * @returns Trimmed version string, or null if missing/invalid
+ */
+const extractAgentVersion = (body: any): string | null => {
+  const raw = (body || {}).agentVersion
+  if (typeof raw !== 'string') return null
+  const version = raw.trim()
+  return version.length <= 32 && AGENT_VERSION_PATTERN.test(version) ? version : null
 }
 
 /**
@@ -239,6 +254,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
   }
 
   const metrics = extractHeartbeatMetrics(request.body)
+  const agentVersion = extractAgentVersion(request.body)
   const db = getDb()
 
   try {
@@ -276,8 +292,8 @@ export const handleHeartbeat = async (request: any, reply: any) => {
     // status is still WAKE_TIMEOUT) is unaffected.
     const heartbeatApplied = await withTransaction(async (tx) => {
       const result = await tx.run(
-        'UPDATE devices SET last_seen = ?, status = ?, updated_at = ? WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
-        [now, STATUS_ONLINE, now, deviceId, device.agent_key_hash, agentKey.substring(0, API_KEY_HINT_LEN)]
+        'UPDATE devices SET last_seen = ?, status = ?, updated_at = ?, agent_version = COALESCE(?, agent_version) WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
+        [now, STATUS_ONLINE, now, agentVersion, deviceId, device.agent_key_hash, agentKey.substring(0, API_KEY_HINT_LEN)]
       )
       if (result.changes !== 1) return false
 

@@ -1,4 +1,3 @@
-import { FastifyReply, FastifyRequest } from 'fastify'
 import { STATUS_NOT_PAIRED, STATUS_WAKE_TIMEOUT } from '../config/constants.js'
 import { getDb, withTransaction } from '../database/index.js'
 import { isValidIp, isValidMac, normalizeIp, normalizeMac } from '../utils/validation.js'
@@ -8,7 +7,7 @@ import { broadcastState } from './ws.js'
 /**
  * Handles getting the dashboard summary.
  */
-export const handleGetDashboard = async (request: any, reply: any) => {
+export const handleGetDashboard = async (_request: any, reply: any) => {
   const db = getDb()
   try {
     const [devices, onlineDevices, alerts] = await Promise.all([
@@ -31,15 +30,16 @@ export const handleGetDashboard = async (request: any, reply: any) => {
 /**
  * Handles getting the list of all devices.
  */
-export const handleGetDevices = async (request: any, reply: any) => {
+export const handleGetDevices = async (_request: any, reply: any) => {
   const db = getDb()
   try {
     const devices = await db.all(
       // agent_key_hash / agent_key_hint 는 의도적으로 제외한다. 둘 다 에이전트
       // API Key 에서 파생된 값이라 브라우저로 내보낼 이유가 없다.
       `SELECT devices.id, devices.name, devices.mac_address, devices.ip_address,
-              devices.agent_paired, devices.paired_at, devices.last_seen, devices.status,
+              devices.agent_paired, devices.paired_at, devices.last_seen, devices.status, devices.agent_version,
               devices.created_at, devices.updated_at,
+              devices.ssh_username, devices.ssh_port, devices.ssh_host_key,
               device_metrics_latest.cpu_usage, device_metrics_latest.memory_usage, device_metrics_latest.disk_usage
        FROM devices
        LEFT JOIN device_metrics_latest ON device_metrics_latest.device_id = devices.id
@@ -79,7 +79,7 @@ export const handleGetDeviceHistory = async (request: any, reply: any) => {
 /**
  * Handles getting recent alerts.
  */
-export const handleGetAlerts = async (request: any, reply: any) => {
+export const handleGetAlerts = async (_request: any, reply: any) => {
   const db = getDb()
   try {
     const alerts = await db.all(

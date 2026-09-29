@@ -334,3 +334,18 @@ input {
     gap: 1rem;
   }
 }
+
+.ssh-output {
+  margin: 0;
+  padding: 0.5rem;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  background: rgba(15, 23, 42, 0.6);
+  border-radius: 6px;
+  font-size: 0.8rem;
+}
+
+.ssh-stderr {
+  color: #fca5a5;
+}

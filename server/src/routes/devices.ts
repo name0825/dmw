@@ -1,4 +1,4 @@
-import { DEVICE_WAKE_RATE_LIMIT_MAX } from '../config/constants.js'
+import { DEVICE_WAKE_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
 import * as deviceService from '../services/devices.js'
 
 // ============================================================================
@@ -38,7 +38,7 @@ export const registerDeviceRoutes = (app: any) => {
     return await deviceService.handleDeleteDevice(request, reply)
   })
 
-  app.post('/devices/:id/wake', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: '1 minute' } } }, async (request: any, reply: any) => {
+  app.post('/devices/:id/wake', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
     return await deviceService.handleWakeDevice(request, reply)
   })
 }
