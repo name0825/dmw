@@ -68,6 +68,20 @@ docker compose up -d --build
 
 `docker-compose.yml`은 `server`, `web` 두 컨테이너를 `network_mode: host`로 실행합니다(리눅스 호스트 전용). `server`는 `BIND_HOST=127.0.0.1`로 바인딩되어 호스트 루프백을 통해서만 접근 가능하며, `web`(nginx)이 `/api/` → `127.0.0.1:3001`, `/ws` → `127.0.0.1:3002`로 프록시합니다(`web/nginx.conf`, `web/nginx/dmw-locations.conf`). 데이터는 `dmw_data` 볼륨(`/app/data`)에 저장됩니다. `JWT_SECRET`과 `ADMIN_PASSWORD`는 루트 `.env`에 반드시 설정해야 컨테이너가 기동합니다.
 
+개발용으로는 `docker-compose.dev.yml` 오버레이를 함께 지정하면 두 서비스가 Dockerfile의 `source` 스테이지로 빌드되고, `./server`·`./web`을 바인드 마운트해 `tsx watch`/Vite dev 서버로 핫 리로드됩니다. `docker-compose.prod.yml`은 현재 덮어쓰는 항목이 없는 운영용 자리표시자로, 기본 `docker-compose.yml`만 쓴 것과 같습니다.
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build     # 개발 (핫 리로드)
+docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  # 운영
+```
+
+런처 스크립트에 `docker` 인자(또는 `DMW_DOCKER=1`)를 주면 위 명령을 대신 실행합니다: `dev`/`agent`는 dev 오버레이, `prod`는 prod 오버레이(백그라운드). 루트 `.env`가 없고 `JWT_SECRET`/`ADMIN_PASSWORD`도 설정돼 있지 않으면 시작 전에 중단합니다. 인자 없이 실행하면 기존처럼 Docker 없이 로컬에서 실행합니다.
+
+```bash
+./start.sh dev docker
+./start.sh prod docker
+```
+
 > `docker-compose.yml`의 `server.environment`는 `DISCORD_WEBHOOK_URL`, `SLACK_WEBHOOK_URL`, `TELEGRAM_BOT_TOKEN`/`TELEGRAM_CHAT_ID`, `WOL_BROADCAST_ADDRESS`, `SSH_KEY_PATH`를 `.env`에서 컨테이너로 전달합니다. SSH 키 기본 위치는 `dmw_data` 볼륨의 `/app/data/ssh/dmw_ed25519`입니다.
 
 ### HTTPS로 서비스하기
