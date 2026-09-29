@@ -1,4 +1,4 @@
-FROM node:20-alpine AS build
+FROM node:20-alpine AS source
 WORKDIR /app
 ARG VITE_API_BASE=
 ARG VITE_WS_BASE=
@@ -11,9 +11,11 @@ ENV WS_PORT=$WS_PORT
 COPY package*.json ./
 RUN npm install
 COPY . .
+
+FROM source AS build
 RUN npm run build
 
-FROM nginx:1.27-alpine
+FROM nginx:1.27-alpine AS runtime
 ENV WEB_DEV_PORT=5173
 COPY --from=build /app/dist /usr/share/nginx/html
 COPY nginx.conf /etc/nginx/templates/default.conf.template

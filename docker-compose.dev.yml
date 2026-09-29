@@ -1,0 +1,28 @@
+# Dev override. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+#
+# Both services build the `source` stage of their Dockerfile, which carries
+# the full dependency tree (tsx, vite) and the workspace sources without
+# running the production build. Only the source directories are
+# bind-mounted, and an anonymous volume keeps the image's node_modules from
+# being shadowed by the host directory.
+services:
+  server:
+    build:
+      target: source
+    restart: "no"
+    environment:
+      NODE_ENV: development
+    command: ["npm", "--workspace", "server", "run", "dev"]
+    volumes:
+      - ./server:/app/server
+      - /app/server/node_modules
+
+  web:
+    build:
+      target: source
+    restart: "no"
+    command: ["npm", "run", "dev"]
+    volumes:
+      - ./web:/app
+      - /app/node_modules

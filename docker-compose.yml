@@ -1,10 +1,9 @@
-version: "3.9"
-
 services:
   server:
     build:
       context: .
       dockerfile: server/Dockerfile
+      target: runtime
     container_name: dmw-server
     restart: unless-stopped
     network_mode: host
@@ -13,6 +12,7 @@ services:
       WS_PORT: 3002
       BIND_HOST: 127.0.0.1
       NODE_ENV: production
+      DB_PATH: /app/data/dmw.db
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file at the project root before running docker compose}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in a .env file at the project root before running docker compose}
@@ -36,6 +36,7 @@ services:
     build:
       context: ./web
       dockerfile: Dockerfile
+      target: runtime
       args:
         VITE_API_BASE: ${VITE_API_BASE:-}
         VITE_WS_BASE: ${VITE_WS_BASE:-}

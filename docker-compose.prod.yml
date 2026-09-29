@@ -1,0 +1,5 @@
+# Production override. Use with:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+# docker-compose.yml already describes the production stack (both services on
+# the host network), so there is nothing to override yet.
+services: {}
