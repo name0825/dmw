@@ -88,3 +88,16 @@ test('issues an untargeted code when deviceId is omitted', async () => {
   const row = await getDb().get('SELECT target_device_id FROM pairing_codes WHERE code = ?', [code])
   assert.equal(row.target_device_id, null)
 })
+
+test('pruneExpiredPairingCodes deletes expired and used codes but keeps active ones', async () => {
+  const { pruneExpiredPairingCodes } = await import('./services/pairing.js')
+  const db = getDb()
+  const past = new Date(Date.now() - 60_000).toISOString()
+  const future = new Date(Date.now() + 60_000).toISOString()
+  await db.run('INSERT INTO pairing_codes (code, expires_at) VALUES (?, ?)', ['EXPIRED1', past])
+  await db.run('INSERT INTO pairing_codes (code, expires_at, used_at) VALUES (?, ?, ?)', ['USED0001', future, past])
+  await db.run('INSERT INTO pairing_codes (code, expires_at) VALUES (?, ?)', ['ACTIVE01', future])
+
+  assert.equal(await pruneExpiredPairingCodes(), 2)
+  assert.deepEqual(await db.all('SELECT code FROM pairing_codes'), [{ code: 'ACTIVE01' }])
+})

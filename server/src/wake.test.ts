@@ -44,3 +44,13 @@ test('sendWakePacket propagates failure instead of resolving when the MAC addres
     /malformed MAC address/
   )
 })
+
+test('subnetBroadcast picks the matching interface with the longest prefix', () => {
+  const info = (address: string, netmask: string) => ({ address, netmask, family: 'IPv4', internal: false, mac: '', cidr: null })
+  const interfaces = {
+    wide: [info('10.0.0.1', '255.0.0.0')],
+    narrow: [info('10.0.5.1', '255.255.255.0')],
+  } as unknown as NodeJS.Dict<import('node:os').NetworkInterfaceInfo[]>
+
+  assert.equal(subnetBroadcast('10.0.5.37', interfaces), '10.0.5.255')
+})

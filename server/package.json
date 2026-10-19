@@ -4,10 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "dev": "node -e \"process.env.NODE_ENV=process.env.NODE_ENV||'development';require('child_process').spawn('npx tsx watch src/index.ts',{stdio:'inherit',shell:true})\"",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
-    "test": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build &&node --test \"dist/**/*.test.js\""
+    "test": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\" && npm run build && node -e \"process.env.NODE_ENV='test';const r=require('child_process').spawnSync(process.execPath,['--test','dist/**/*.test.js'],{stdio:'inherit'});process.exit(r.status??1)\""
   },
   "dependencies": {
     "@fastify/cookie": "^11.1.0",

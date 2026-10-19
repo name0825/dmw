@@ -14,7 +14,7 @@ export const handleGetDashboard = async (_request: any, reply: any) => {
   try {
     const [devices, onlineDevices, alerts] = await Promise.all([
       db.all('SELECT COUNT(*) as count FROM devices'),
-      db.get('SELECT COUNT(*) as count FROM devices WHERE status = "ONLINE"'),
+      db.get("SELECT COUNT(*) as count FROM devices WHERE status = 'ONLINE'"),
       db.all('SELECT * FROM alerts ORDER BY created_at DESC LIMIT 5')
     ])
 

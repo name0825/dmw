@@ -11,7 +11,7 @@ process.env.DB_PATH = path.join(databaseDirectory, 'dmw.db')
 const { initPool, closePool, getDb } = await import('./database/index.js')
 const { ADMIN_EMAIL, ADMIN_PASSWORD, SSH_KEY_PATH } = await import('./config.js')
 const { authMiddleware } = await import('./middleware/auth.js')
-const { isPublicRoute, createToken } = await import('./auth.js')
+const { isPublicRoute, createToken, resetPasswordThrottles, ACCOUNT_LOCK_THRESHOLD } = await import('./auth.js')
 const { registerSshRoutes } = await import('./routes/ssh.js')
 const { SshError } = await import('./services/ssh.js')
 type ExecRequest = import('./services/ssh.js').ExecRequest
@@ -60,15 +60,30 @@ const adminAuthHeader = async () => {
 }
 
 let macCounter = 0
-const insertDevice = async (overrides: { username?: string | null; hostKey?: string | null } = {}) => {
+const insertDevice = async (
+  overrides: { username?: string | null; hostKey?: string | null; hostIp?: string | null } = {},
+) => {
   macCounter += 1
   const username = overrides.username === undefined ? 'root' : overrides.username
   const hostKey = overrides.hostKey === undefined ? TRUSTED : overrides.hostKey
+  const ip = `127.0.1.${macCounter}`
+  const hostIp = overrides.hostIp === undefined ? (hostKey ? ip : null) : overrides.hostIp
   const inserted = await getDb().run(
-    'INSERT INTO devices (name, mac_address, ip_address, status, ssh_username, ssh_port, ssh_host_key) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    [`Device ${macCounter}`, `AA:BB:CC:00:00:${String(macCounter).padStart(2, '0')}`, `127.0.1.${macCounter}`, 'ONLINE', username, username ? 22 : null, hostKey],
+    'INSERT INTO devices (name, mac_address, ip_address, status, ssh_username, ssh_port, ssh_host_key, ssh_host_ip) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    [`Device ${macCounter}`, `AA:BB:CC:00:00:${String(macCounter).padStart(2, '0')}`, ip, 'ONLINE', username, username ? 22 : null, hostKey, hostIp],
   )
   return inserted.lastID as number
+}
+
+const deviceIp = async (deviceId: number): Promise<string> =>
+  (await getDb().get('SELECT ip_address FROM devices WHERE id = ?', [deviceId])).ip_address
+
+const userAuthHeader = async () => {
+  await getDb().run(
+    "INSERT OR IGNORE INTO users (email, password_hash, role) VALUES ('plain@dmw.local', 'x', 'user')",
+  )
+  const user = await getDb().get("SELECT token_version FROM users WHERE email = 'plain@dmw.local'")
+  return { authorization: `Bearer ${createToken('plain@dmw.local', user.token_version ?? 0)}` }
 }
 
 const runCommandRequest = async (
@@ -193,6 +208,7 @@ test('saving SSH settings requires an explicit, well-formed host key fingerprint
   try {
     const deviceId = await insertDevice({ username: null, hostKey: null })
     const headers = await adminAuthHeader()
+    const ip = await deviceIp(deviceId)
 
     for (const payload of [
       { username: 'root', port: 22, password: ADMIN_PASSWORD },
@@ -200,9 +216,11 @@ test('saving SSH settings requires an explicit, well-formed host key fingerprint
       { username: 'root; rm -rf /', port: 22, hostKeyFingerprint: TRUSTED, password: ADMIN_PASSWORD },
       { username: 'root', port: 70000, hostKeyFingerprint: TRUSTED, password: ADMIN_PASSWORD },
     ]) {
-      const bad = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload })
+      const bad = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { hostKeyIp: ip, ...payload } })
       assert.equal(bad.statusCode, 400)
     }
+    const noIp = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { username: 'root', port: 22, hostKeyFingerprint: TRUSTED, password: ADMIN_PASSWORD } })
+    assert.equal(noIp.statusCode, 400)
     let row = await getDb().get('SELECT ssh_username, ssh_host_key FROM devices WHERE id = ?', [deviceId])
     assert.equal(row.ssh_username, null)
     assert.equal(row.ssh_host_key, null)
@@ -210,13 +228,14 @@ test('saving SSH settings requires an explicit, well-formed host key fingerprint
     const scan = await app.inject({ method: 'POST', url: `/devices/${deviceId}/ssh/scan`, headers, payload: { port: 22 } })
     assert.equal(scan.statusCode, 200)
     assert.equal(scan.json().fingerprint, TRUSTED)
+    assert.equal(scan.json().ip, ip)
     row = await getDb().get('SELECT ssh_host_key FROM devices WHERE id = ?', [deviceId])
     assert.equal(row.ssh_host_key, null)
 
-    const saved = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { username: 'admin', port: 2222, hostKeyFingerprint: TRUSTED, password: ADMIN_PASSWORD } })
+    const saved = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { username: 'admin', port: 2222, hostKeyFingerprint: TRUSTED, hostKeyIp: ip, password: ADMIN_PASSWORD } })
     assert.equal(saved.statusCode, 200)
-    row = await getDb().get('SELECT ssh_username, ssh_port, ssh_host_key FROM devices WHERE id = ?', [deviceId])
-    assert.deepEqual({ ...row }, { ssh_username: 'admin', ssh_port: 2222, ssh_host_key: TRUSTED })
+    row = await getDb().get('SELECT ssh_username, ssh_port, ssh_host_key, ssh_host_ip FROM devices WHERE id = ?', [deviceId])
+    assert.deepEqual({ ...row }, { ssh_username: 'admin', ssh_port: 2222, ssh_host_key: TRUSTED, ssh_host_ip: ip })
 
     const removed = await app.inject({ method: 'DELETE', url: `/devices/${deviceId}/ssh`, headers, payload: { password: ADMIN_PASSWORD } })
     assert.equal(removed.statusCode, 200)
@@ -234,7 +253,7 @@ test('changing or clearing SSH settings requires the admin password (400 missing
   try {
     const deviceId = await insertDevice()
     const headers = await adminAuthHeader()
-    const settings = { username: 'admin', port: 2222, hostKeyFingerprint: PRESENTED_BY_ATTACKER }
+    const settings = { username: 'admin', port: 2222, hostKeyFingerprint: PRESENTED_BY_ATTACKER, hostKeyIp: await deviceIp(deviceId) }
 
     for (const extra of [{}, { password: '' }]) {
       const put = await app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { ...settings, ...extra } })
@@ -271,7 +290,7 @@ test('successful SSH config changes write config_set and config_clear audit rows
       method: 'PUT',
       url: `/devices/${deviceId}/ssh`,
       headers,
-      payload: { username: 'admin', port: 2222, hostKeyFingerprint: newFingerprint, password: ADMIN_PASSWORD },
+      payload: { username: 'admin', port: 2222, hostKeyFingerprint: newFingerprint, hostKeyIp: await deviceIp(deviceId), password: ADMIN_PASSWORD },
     })
     assert.equal(put.statusCode, 200)
     const set = await getDb().get("SELECT * FROM ssh_audit WHERE event = 'config_set'")
@@ -497,6 +516,103 @@ test('audit rows survive device deletion and the history endpoint lists recent r
     assert.equal(rows[0].device_id, null)
     assert.equal(rows[0].device_name, `Device ${macCounter}`)
   } finally {
+    await app.close()
+  }
+})
+
+test('exec is refused with 409 when the device IP differs from the IP its host key was pinned to', async () => {
+  const { transport, calls } = makeTransport()
+  const app = buildApp(transport)
+  try {
+    const deviceId = await insertDevice({ hostIp: '10.9.9.9' })
+    const response = await runCommandRequest(app, deviceId, { command: 'uptime', password: ADMIN_PASSWORD })
+    assert.equal(response.statusCode, 409)
+    assert.match(response.json().message, /re-scan/i)
+    assert.equal(calls.length, 0)
+    assert.equal((await getDb().all('SELECT id FROM command_runs')).length, 0)
+
+    const legacy = await insertDevice({ hostIp: null })
+    const legacyResponse = await runCommandRequest(app, legacy, { command: 'uptime', password: ADMIN_PASSWORD })
+    assert.equal(legacyResponse.statusCode, 409)
+    assert.equal(calls.length, 0)
+
+    await getDb().run('UPDATE devices SET ip_address = ssh_host_ip WHERE id = ?', [deviceId])
+    const ok = await runCommandRequest(app, deviceId, { command: 'uptime', password: ADMIN_PASSWORD })
+    assert.equal(ok.statusCode, 200)
+    assert.equal(calls.length, 1)
+    assert.equal(calls[0].host, '10.9.9.9')
+  } finally {
+    await app.close()
+  }
+})
+
+test('saving SSH settings is rejected when the device IP changed since the scan, and clearing drops the pinned IP', async () => {
+  const { transport } = makeTransport()
+  const app = buildApp(transport)
+  try {
+    const deviceId = await insertDevice({ username: null, hostKey: null })
+    const headers = await adminAuthHeader()
+    const stale = await app.inject({
+      method: 'PUT',
+      url: `/devices/${deviceId}/ssh`,
+      headers,
+      payload: { username: 'root', port: 22, hostKeyFingerprint: TRUSTED, hostKeyIp: '10.1.2.3', password: ADMIN_PASSWORD },
+    })
+    assert.equal(stale.statusCode, 409)
+    const row = await getDb().get('SELECT ssh_host_key, ssh_host_ip FROM devices WHERE id = ?', [deviceId])
+    assert.equal(row.ssh_host_key, null)
+    assert.equal(row.ssh_host_ip, null)
+
+    const pinned = await insertDevice()
+    const removed = await app.inject({ method: 'DELETE', url: `/devices/${pinned}/ssh`, headers, payload: { password: ADMIN_PASSWORD } })
+    assert.equal(removed.statusCode, 200)
+    const cleared = await getDb().get('SELECT ssh_host_ip FROM devices WHERE id = ?', [pinned])
+    assert.equal(cleared.ssh_host_ip, null)
+  } finally {
+    await app.close()
+  }
+})
+
+test('every SSH route rejects an authenticated non-admin user with 403', async () => {
+  const { transport, calls } = makeTransport()
+  const app = buildApp(transport)
+  try {
+    const deviceId = await insertDevice()
+    const headers = await userAuthHeader()
+    const body = { command: 'uptime', password: ADMIN_PASSWORD }
+    const responses = await Promise.all([
+      app.inject({ method: 'GET', url: '/ssh/public-key', headers }),
+      app.inject({ method: 'POST', url: `/devices/${deviceId}/ssh/scan`, headers, payload: { port: 22 } }),
+      app.inject({ method: 'PUT', url: `/devices/${deviceId}/ssh`, headers, payload: { username: 'root', port: 22, hostKeyFingerprint: TRUSTED, hostKeyIp: await deviceIp(deviceId), password: ADMIN_PASSWORD } }),
+      app.inject({ method: 'DELETE', url: `/devices/${deviceId}/ssh`, headers, payload: { password: ADMIN_PASSWORD } }),
+      app.inject({ method: 'POST', url: `/devices/${deviceId}/commands`, headers, payload: body }),
+      app.inject({ method: 'GET', url: `/devices/${deviceId}/commands`, headers }),
+    ])
+    assert.deepEqual(responses.map((r) => r.statusCode), [403, 403, 403, 403, 403, 403])
+    assert.equal(calls.length, 0)
+    assert.equal((await getDb().all('SELECT id FROM command_runs')).length, 0)
+  } finally {
+    await app.close()
+  }
+})
+
+test('repeated wrong passwords lock the account for SSH re-confirmation, even for the right password', async () => {
+  const { transport, calls } = makeTransport()
+  const app = buildApp(transport)
+  try {
+    const deviceId = await insertDevice()
+    for (let attempt = 0; attempt < ACCOUNT_LOCK_THRESHOLD; attempt += 1) {
+      const wrong = await runCommandRequest(app, deviceId, { command: 'uptime', password: 'wrong' })
+      assert.equal(wrong.statusCode, 403)
+    }
+    const locked = await runCommandRequest(app, deviceId, { command: 'uptime', password: ADMIN_PASSWORD })
+    assert.equal(locked.statusCode, 429)
+    assert.ok(Number(locked.headers['retry-after']) > 0)
+    const del = await app.inject({ method: 'DELETE', url: `/devices/${deviceId}/ssh`, headers: await adminAuthHeader(), payload: { password: ADMIN_PASSWORD } })
+    assert.equal(del.statusCode, 429)
+    assert.equal(calls.length, 0)
+  } finally {
+    resetPasswordThrottles()
     await app.close()
   }
 })

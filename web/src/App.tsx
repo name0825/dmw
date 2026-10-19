@@ -63,15 +63,19 @@ export default function App() {
       return
     }
 
-    const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, { method: 'POST' })
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, { method: 'POST' })
 
-    if (!res.ok) {
-      setMessage(data?.message || '페어링 코드 발급 실패')
-      return
+      if (!res.ok) {
+        setMessage(data?.message || '페어링 코드 발급 실패')
+        return
+      }
+
+      setPairingInfo({ code: data.code, expiresAt: data.expiresAt })
+      setMessage('페어링 코드가 발급되었습니다.')
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
     }
-
-    setPairingInfo({ code: data.code, expiresAt: data.expiresAt })
-    setMessage('페어링 코드가 발급되었습니다.')
   }
 
   /**
@@ -84,19 +88,23 @@ export default function App() {
       return
     }
 
-    const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ deviceId: device.id }),
-    })
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/pairing-codes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ deviceId: device.id }),
+      })
 
-    if (!res.ok) {
-      setMessage(data?.message || '페어링 코드 발급 실패')
-      return
+      if (!res.ok) {
+        setMessage(data?.message || '페어링 코드 발급 실패')
+        return
+      }
+
+      setPairingInfo({ code: data.code, expiresAt: data.expiresAt, targetDeviceName: device.name })
+      setMessage('페어링 코드가 발급되었습니다.')
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
     }
-
-    setPairingInfo({ code: data.code, expiresAt: data.expiresAt, targetDeviceName: device.name })
-    setMessage('페어링 코드가 발급되었습니다.')
   }
 
   /**

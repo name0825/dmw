@@ -30,16 +30,21 @@ export const subnetBroadcast = (
 ): string => {
   const target = ipToLong(ipv4)
 
+  let best: { broadcast: string; prefix: number } | undefined
   for (const infos of Object.values(interfaces)) {
     for (const info of infos ?? []) {
       if (info.internal || info.family !== 'IPv4') continue
       const address = ipToLong(info.address)
       const netmask = ipToLong(info.netmask)
       if ((address & netmask) === (target & netmask)) {
-        return longToIp((address & netmask) | (~netmask >>> 0))
+        const prefix = netmask.toString(2).replace(/0/g, '').length
+        if (!best || prefix > best.prefix) {
+          best = { broadcast: longToIp((address & netmask) | (~netmask >>> 0)), prefix }
+        }
       }
     }
   }
+  if (best) return best.broadcast
 
   if (!warnedFallbackIps.has(ipv4)) {
     warnedFallbackIps.add(ipv4)

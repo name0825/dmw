@@ -148,3 +148,65 @@ test('production check is case-insensitive on NODE_ENV and rejects whitespace-pa
     else process.env.CORS_ORIGIN = previousCorsOrigin
   }
 })
+
+test('unset or unknown NODE_ENV fails closed: placeholder secrets are rejected, only development/test skip checks', () => {
+  const previous = {
+    NODE_ENV: process.env.NODE_ENV,
+    JWT_SECRET: process.env.JWT_SECRET,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
+  }
+
+  try {
+    delete process.env.NODE_ENV
+    delete process.env.JWT_SECRET
+    delete process.env.ADMIN_PASSWORD
+    delete process.env.CORS_ORIGIN
+    assert.throws(() => validateRuntimeConfig(), /JWT_SECRET/)
+
+    process.env.NODE_ENV = 'staging'
+    assert.throws(() => validateRuntimeConfig(), /JWT_SECRET/)
+
+    process.env.NODE_ENV = 'development'
+    assert.doesNotThrow(() => validateRuntimeConfig())
+    process.env.NODE_ENV = ' Test '
+    assert.doesNotThrow(() => validateRuntimeConfig())
+
+    delete process.env.NODE_ENV
+    process.env.JWT_SECRET = 'a-real-production-secret-that-is-long-enough'
+    process.env.ADMIN_PASSWORD = 'a-real-production-password'
+    process.env.CORS_ORIGIN = 'https://example.com'
+    assert.doesNotThrow(() => validateRuntimeConfig())
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+})
+
+test('production requires ADMIN_PASSWORD of at least 12 characters', () => {
+  const previous = {
+    NODE_ENV: process.env.NODE_ENV,
+    JWT_SECRET: process.env.JWT_SECRET,
+    ADMIN_PASSWORD: process.env.ADMIN_PASSWORD,
+    CORS_ORIGIN: process.env.CORS_ORIGIN,
+  }
+
+  try {
+    process.env.NODE_ENV = 'production'
+    process.env.JWT_SECRET = 'a-real-production-secret-that-is-long-enough'
+    process.env.CORS_ORIGIN = 'https://example.com'
+
+    process.env.ADMIN_PASSWORD = 'short-pass1'
+    assert.throws(() => validateRuntimeConfig(), /ADMIN_PASSWORD must be at least 12/)
+
+    process.env.ADMIN_PASSWORD = 'twelve-chars'
+    assert.doesNotThrow(() => validateRuntimeConfig())
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name]
+      else process.env[name] = value
+    }
+  }
+})

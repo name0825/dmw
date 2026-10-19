@@ -1,6 +1,9 @@
+import { isIP } from 'node:net'
+
 import bcrypt from 'bcryptjs'
 
 import { SSH_COMMAND_MAX_LENGTH, SSH_CONNECT_TIMEOUT_MS, SSH_EXEC_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
+import { beginSshConfirmAttempt } from '../auth.js'
 import { getDb, withTransaction } from '../database/index.js'
 import { FINGERPRINT_PATTERN, recordSshAudit, runCommand, ssh2Transport, SshError } from '../services/ssh.js'
 import type { SshAuditEntry } from '../services/ssh.js'
@@ -14,6 +17,15 @@ const DEFAULT_SSH_PORT = 22
 
 const rateLimit = { config: { rateLimit: { max: SSH_EXEC_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }
 
+const requireAdmin = async (request: any, reply: any) => {
+  if (request.user?.role !== 'admin') {
+    return reply.code(403).send({ message: 'Forbidden' })
+  }
+}
+
+const adminOnly = { preHandler: requireAdmin }
+const adminRateLimited = { ...rateLimit, preHandler: requireAdmin }
+
 const parseId = (value: unknown): number | null => {
   const id = Number(value)
   return Number.isInteger(id) && id > 0 ? id : null
@@ -25,7 +37,7 @@ const parsePort = (value: unknown): number | null => {
 }
 
 const findDevice = (id: number) =>
-  getDb().get('SELECT id, name, ip_address, ssh_username, ssh_port, ssh_host_key FROM devices WHERE id = ?', [id])
+  getDb().get('SELECT id, name, ip_address, ssh_username, ssh_port, ssh_host_key, ssh_host_ip FROM devices WHERE id = ?', [id])
 
 const isValidPassword = (value: unknown): value is string =>
   typeof value === 'string' && value.length > 0 && value.length <= MAX_PASSWORD_LENGTH
@@ -43,8 +55,17 @@ const confirmPassword = async (
   event: 'command_reauth_failed' | 'config_reauth_failed',
   deviceId: number,
 ) => {
+  const attempt = beginSshConfirmAttempt(request.user.id)
+  if (attempt.lockedMs > 0) {
+    reply.header('Retry-After', String(Math.ceil(attempt.lockedMs / 1000)))
+    reply.code(429).send({ message: 'Too many failed attempts. Try again later.' })
+    return null
+  }
   const user = await getDb().get('SELECT id, password_hash FROM users WHERE id = ?', [request.user.id])
-  if (user && (await bcrypt.compare(password, user.password_hash))) return user
+  if (user && (await bcrypt.compare(password, user.password_hash))) {
+    attempt.succeed()
+    return user
+  }
   console.warn(`SSH re-authentication failed for user ${request.user.id} (${event})`)
   try {
     await recordSshAudit({ event, userId: user?.id ?? null, deviceId } as SshAuditEntry)
@@ -70,6 +91,8 @@ const errorReply = (reply: any, error: SshError) => {
       return reply.code(409).send(body('SSH is not configured for this device'))
     case 'HOST_KEY_MISMATCH':
       return reply.code(409).send(body('SSH host key does not match the trusted fingerprint'))
+    case 'HOST_IP_CHANGED':
+      return reply.code(409).send(body(error.message))
     case 'DEVICE_BUSY':
     case 'GLOBAL_BUSY':
       return reply.code(429).send(body(error.message))
@@ -88,7 +111,7 @@ const errorReply = (reply: any, error: SshError) => {
  * @param deps - Injectable SSH transport (tests pass a fake)
  */
 export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Transport }) => {
-  app.get('/ssh/public-key', async (_request: any, reply: any) => {
+  app.get('/ssh/public-key', adminOnly, async (_request: any, reply: any) => {
     try {
       return { publicKey: await getPublicKey() }
     } catch (error) {
@@ -97,7 +120,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
     }
   })
 
-  app.post('/devices/:id/ssh/scan', rateLimit, async (request: any, reply: any) => {
+  app.post('/devices/:id/ssh/scan', adminRateLimited, async (request: any, reply: any) => {
     const id = parseId(request.params.id)
     const port = parsePort((request.body || {}).port)
     if (!id || !port) {
@@ -111,7 +134,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
         return
       }
       const fingerprint = await deps.transport.scanHostKey(device.ip_address, port, SSH_CONNECT_TIMEOUT_MS)
-      return { fingerprint }
+      return { fingerprint, ip: device.ip_address }
     } catch (error) {
       if (error instanceof SshError) {
         reply.code(error.code === 'TIMEOUT' ? 504 : 502).send({ message: 'Could not read the SSH host key' })
@@ -122,9 +145,9 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
     }
   })
 
-  app.put('/devices/:id/ssh', async (request: any, reply: any) => {
+  app.put('/devices/:id/ssh', adminRateLimited, async (request: any, reply: any) => {
     const id = parseId(request.params.id)
-    const { username, port: rawPort, hostKeyFingerprint, password } = request.body || {}
+    const { username, port: rawPort, hostKeyFingerprint, hostKeyIp, password } = request.body || {}
     const port = parsePort(rawPort)
     if (
       !id ||
@@ -133,9 +156,11 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
       typeof username !== 'string' ||
       !USERNAME_PATTERN.test(username) ||
       typeof hostKeyFingerprint !== 'string' ||
-      !FINGERPRINT_PATTERN.test(hostKeyFingerprint)
+      !FINGERPRINT_PATTERN.test(hostKeyFingerprint) ||
+      typeof hostKeyIp !== 'string' ||
+      isIP(hostKeyIp) === 0
     ) {
-      reply.code(400).send({ message: 'Valid username, port, host key fingerprint, and password are required' })
+      reply.code(400).send({ message: 'Valid username, port, host key fingerprint, scanned IP, and password are required' })
       return
     }
     try {
@@ -146,11 +171,16 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
         reply.code(404).send({ message: 'Device not found' })
         return
       }
+      if (device.ip_address !== hostKeyIp) {
+        reply.code(409).send({ message: 'The device IP address changed since the host key was scanned; re-scan the host key' })
+        return
+      }
       await withTransaction(async (db) => {
-        await db.run('UPDATE devices SET ssh_username = ?, ssh_port = ?, ssh_host_key = ? WHERE id = ?', [
+        await db.run('UPDATE devices SET ssh_username = ?, ssh_port = ?, ssh_host_key = ?, ssh_host_ip = ? WHERE id = ?', [
           username,
           port,
           hostKeyFingerprint,
+          hostKeyIp,
           id,
         ])
         await recordSshAudit(
@@ -172,7 +202,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
     }
   })
 
-  app.delete('/devices/:id/ssh', async (request: any, reply: any) => {
+  app.delete('/devices/:id/ssh', adminRateLimited, async (request: any, reply: any) => {
     const id = parseId(request.params.id)
     const { password } = request.body || {}
     if (!id || !isValidPassword(password)) {
@@ -188,7 +218,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
         return
       }
       await withTransaction(async (db) => {
-        await db.run('UPDATE devices SET ssh_username = NULL, ssh_port = NULL, ssh_host_key = NULL WHERE id = ?', [id])
+        await db.run('UPDATE devices SET ssh_username = NULL, ssh_port = NULL, ssh_host_key = NULL, ssh_host_ip = NULL WHERE id = ?', [id])
         await recordSshAudit(
           {
             event: 'config_clear',
@@ -208,7 +238,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
     }
   })
 
-  app.post('/devices/:id/commands', rateLimit, async (request: any, reply: any) => {
+  app.post('/devices/:id/commands', adminRateLimited, async (request: any, reply: any) => {
     const id = parseId(request.params.id)
     const { command, password } = request.body || {}
     if (
@@ -241,7 +271,7 @@ export const registerSshRoutes = (app: any, deps: SshDeps = { transport: ssh2Tra
     }
   })
 
-  app.get('/devices/:id/commands', async (request: any, reply: any) => {
+  app.get('/devices/:id/commands', adminOnly, async (request: any, reply: any) => {
     const id = parseId(request.params.id)
     const rawLimit = request.query?.limit === undefined ? 20 : Number(request.query.limit)
     if (!id || !Number.isInteger(rawLimit) || rawLimit < 1) {

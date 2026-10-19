@@ -31,6 +31,17 @@ const insertPairingCode = async (db: any, expiresAt: string, targetDeviceId: num
 }
 
 /**
+ * 만료됐거나 이미 사용된 페어링 코드를 삭제하고 삭제된 행 수를 반환한다.
+ */
+export const pruneExpiredPairingCodes = async (db: any = getDb()): Promise<number> => {
+  const result = await db.run(
+    'DELETE FROM pairing_codes WHERE expires_at < ? OR used_at IS NOT NULL',
+    [new Date().toISOString()],
+  )
+  return result.changes ?? 0
+}
+
+/**
  * Handles issuing a pairing code.
  * body.deviceId 가 없으면 기기와 무관한(신규 기기용) 코드를 발급한다.
  * body.deviceId 가 있으면 그 기기에 묶인 코드를 발급한다 — 재페어링은 이 코드로만

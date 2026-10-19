@@ -3,6 +3,7 @@ import {
   DEFAULT_ALERT_MEMORY_THRESHOLD,
   DEFAULT_ALERT_DISK_THRESHOLD,
   STATUS_OFFLINE,
+  STATUS_ONLINE,
 } from './config/constants.js'
 
 type AlertLevel = 'info' | 'warning' | 'critical'
@@ -65,7 +66,7 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
 }
 
 export function evaluateOfflineAlert(device: any, previousStatus: string): DeviceAlert[] {
-  if (previousStatus === STATUS_OFFLINE || device.status !== STATUS_OFFLINE) return []
+  if (previousStatus !== STATUS_ONLINE || device.status !== STATUS_OFFLINE) return []
 
   return [{
     deviceId: Number(device.id),

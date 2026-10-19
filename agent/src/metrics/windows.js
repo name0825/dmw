@@ -20,12 +20,20 @@ const PS_SCRIPT = [
   '}',
 ].join('\n')
 
-export const collectWindowsMetrics = async () => {
-  const { stdout } = await execFileAsync(
-    'powershell',
-    ['-NoProfile', '-NonInteractive', '-Command', PS_SCRIPT],
-    { windowsHide: true },
-  )
+const POWERSHELL_TIMEOUT_MS = 8000
+
+export const collectWindowsMetrics = async ({ exec = execFileAsync } = {}) => {
+  let stdout
+  try {
+    ;({ stdout } = await exec(
+      'powershell',
+      ['-NoProfile', '-NonInteractive', '-Command', PS_SCRIPT],
+      { windowsHide: true, timeout: POWERSHELL_TIMEOUT_MS },
+    ))
+  } catch (error) {
+    console.warn(`[metrics] PowerShell 메트릭 수집 실패: ${error.message}`)
+    return {}
+  }
 
   // Parse the PowerShell object output:
   //   Cpu : 12
@@ -35,23 +43,22 @@ export const collectWindowsMetrics = async () => {
   //   TotalDisk : 234567890123
   const pick = (key) => {
     const match = stdout.match(new RegExp(`${key}\\s*:\\s*([0-9]+)`, 'i'))
-    return match ? Number(match[1]) : 0
+    return match ? Number(match[1]) : undefined
   }
 
-  const cpuUsage = clamp(pick('Cpu'))
+  // Unparseable values stay undefined (omitted from the heartbeat) rather than reporting 0%.
+  const usage = (free, total) => (free !== undefined && total > 0 ? clamp(((total - free) / total) * 100) : undefined)
+
+  const cpu = pick('Cpu')
+  const cpuUsage = cpu !== undefined ? clamp(cpu) : undefined
 
   // FreePhysicalMemory / TotalVisibleMemorySize are in KB.
-  const freeKb = pick('FreeMem')
-  const totalKb = pick('TotalMem')
-  const memoryUsage = totalKb > 0 ? clamp(((totalKb - freeKb) / totalKb) * 100) : 0
+  const memoryUsage = usage(pick('FreeMem'), pick('TotalMem'))
+  const diskUsage = usage(pick('FreeDisk'), pick('TotalDisk'))
 
-  const freeBytes = pick('FreeDisk')
-  const totalBytes = pick('TotalDisk')
-  const diskUsage = totalBytes > 0 ? clamp(((totalBytes - freeBytes) / totalBytes) * 100) : 0
-
-  return {
-    cpuUsage: Number(cpuUsage.toFixed(1)),
-    memoryUsage: Number(memoryUsage.toFixed(1)),
-    diskUsage: Number(diskUsage.toFixed(1)),
-  }
+  const metrics = {}
+  if (cpuUsage !== undefined) metrics.cpuUsage = Number(cpuUsage.toFixed(1))
+  if (memoryUsage !== undefined) metrics.memoryUsage = Number(memoryUsage.toFixed(1))
+  if (diskUsage !== undefined) metrics.diskUsage = Number(diskUsage.toFixed(1))
+  return metrics
 }

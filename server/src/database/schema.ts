@@ -169,6 +169,9 @@ const migrateSchema = async (db: Database): Promise<void> => {
   if (!deviceColumns.some((column) => column.name === 'ssh_host_key')) {
     await db.exec('ALTER TABLE devices ADD COLUMN ssh_host_key TEXT')
   }
+  if (!deviceColumns.some((column) => column.name === 'ssh_host_ip')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN ssh_host_ip TEXT')
+  }
 
   // 순서 주의: 테이블을 재생성하면 인덱스도 함께 사라지므로,
   // 유니크 인덱스 보장은 재생성 이후에 수행해야 한다.

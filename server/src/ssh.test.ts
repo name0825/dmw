@@ -99,7 +99,7 @@ test('initDb adds the SSH columns and command_runs table to a pre-existing datab
     await initDb(db)
     await initDb(db)
     const columns = (await db.all('PRAGMA table_info(devices)')).map((column: any) => column.name)
-    for (const name of ['ssh_username', 'ssh_port', 'ssh_host_key']) assert.ok(columns.includes(name), name)
+    for (const name of ['ssh_username', 'ssh_port', 'ssh_host_key', 'ssh_host_ip']) assert.ok(columns.includes(name), name)
     const table = await db.get("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'command_runs'")
     assert.ok(table)
   } finally {

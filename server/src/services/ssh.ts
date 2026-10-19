@@ -19,6 +19,7 @@ export type SshErrorCode =
   | 'AUTH'
   | 'CONNECT'
   | 'KEY_UNAVAILABLE'
+  | 'HOST_IP_CHANGED'
   | 'DEVICE_BUSY'
   | 'GLOBAL_BUSY'
 
@@ -71,6 +72,7 @@ export type SshDevice = {
   ssh_username: string | null
   ssh_port: number | null
   ssh_host_key: string | null
+  ssh_host_ip: string | null
 }
 
 export type CommandRunResult = {
@@ -170,6 +172,12 @@ export const runCommand = async (
 ): Promise<CommandRunResult> => {
   if (!device.ssh_username || !device.ssh_port || !device.ssh_host_key) {
     throw new SshError('NOT_CONFIGURED', 'SSH is not configured for this device')
+  }
+  if (device.ssh_host_ip !== device.ip_address) {
+    throw new SshError(
+      'HOST_IP_CHANGED',
+      'The device IP address differs from the one its SSH host key was trusted for; re-scan and re-confirm the host key',
+    )
   }
 
   const release = acquireSlot(device.id)

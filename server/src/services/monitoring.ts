@@ -1,5 +1,5 @@
 import { getDb, withTransaction } from '../database/index.js'
-import { evaluateAlerts, evaluateOfflineAlert } from '../alerts.js'
+import { evaluateAlerts, evaluateOfflineAlert, type DeviceAlert } from '../alerts.js'
 import { notifyAlerts, saveAlertsToDb } from './notifications.js'
 import { broadcastState } from './ws.js'
 import { evaluateDeviceStatus } from '../deviceStatus.js'
@@ -48,6 +48,19 @@ const pruneAlerts = async () => {
   })
 }
 
+const applyAlertCooldown = (alerts: DeviceAlert[]): DeviceAlert[] => {
+  const now = Date.now()
+  return alerts.filter((alert) => {
+    const key = `${alert.deviceId}-${alert.metric}`
+    const lastTimestamp = lastAlertTimestamps.get(key) || 0
+    if (now - lastTimestamp > ALERT_COOLDOWN_MS) {
+      lastAlertTimestamps.set(key, now)
+      return true
+    }
+    return false
+  })
+}
+
 const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
   const devices = await tx.all(
     'SELECT * FROM devices WHERE status IN (?, ?, ?) ORDER BY id DESC',
@@ -76,9 +89,9 @@ const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
  */
 export const updateOfflineStates = async () => {
   const transitions = await withTransaction((tx) => updateDeviceStatuses(tx))
-  const offlineAlerts = transitions.flatMap(({ device, previousStatus }) =>
+  const offlineAlerts = applyAlertCooldown(transitions.flatMap(({ device, previousStatus }) =>
     evaluateOfflineAlert(device, previousStatus),
-  )
+  ))
   if (offlineAlerts.length) {
     await saveAlertsToDb(offlineAlerts)
     await notifyAlerts(offlineAlerts)
@@ -121,16 +134,7 @@ export const monitorAlerts = async () => {
   const alerts = devices.flatMap((device: any) => evaluateAlerts(device))
 
   // 냉각 기간 적용
-  const now = Date.now()
-  const filteredAlerts = alerts.filter((alert: any) => {
-    const key = `${alert.deviceId}-${alert.metric}`
-    const lastTimestamp = lastAlertTimestamps.get(key) || 0
-    if (now - lastTimestamp > ALERT_COOLDOWN_MS) {
-      lastAlertTimestamps.set(key, now)
-      return true
-    }
-    return false
-  })
+  const filteredAlerts = applyAlertCooldown(alerts)
 
   if (filteredAlerts.length) {
     await saveAlertsToDb(filteredAlerts)

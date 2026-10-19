@@ -27,6 +27,7 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
   const [username, setUsername] = useState(device.ssh_username ?? '')
   const [port, setPort] = useState(String(device.ssh_port ?? 22))
   const [scanned, setScanned] = useState('')
+  const [scannedIp, setScannedIp] = useState('')
   const [command, setCommand] = useState('')
   const [password, setPassword] = useState('')
   const [running, setRunning] = useState(false)
@@ -73,6 +74,7 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
     if (busy) return
     setNotice('')
     setScanned('')
+    setScannedIp('')
     setBusy(true)
     try {
       const { res, data } = await authedRequest(`${apiBase}/devices/${device.id}/ssh/scan`, jsonInit('POST', { port: Number(port) }))
@@ -81,6 +83,7 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
         return
       }
       setScanned(data.fingerprint)
+      setScannedIp(data.ip ?? '')
     } catch {
       setNotice('네트워크 오류로 요청에 실패했습니다.')
     } finally {
@@ -95,7 +98,7 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
     try {
       const { res, data } = await authedRequest(
         `${apiBase}/devices/${device.id}/ssh`,
-        jsonInit('PUT', { username, port: Number(port), hostKeyFingerprint: scanned, password }),
+        jsonInit('PUT', { username, port: Number(port), hostKeyFingerprint: scanned, hostKeyIp: scannedIp, password }),
       )
       setPassword('')
       if (!res.ok) {
@@ -103,6 +106,7 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
         return
       }
       setScanned('')
+      setScannedIp('')
       setNotice('SSH 설정을 저장했습니다.')
     } catch {
       setNotice('네트워크 오류로 요청에 실패했습니다.')
@@ -187,10 +191,10 @@ export default function SshPanel({ device, apiBase, authedRequest }: SshPanelPro
       </div>
       {scanned && (
         <div className="ssh-confirm">
-          <small>기기가 제시한 host key 지문입니다. 기기에서 확인한 값과 일치할 때만 저장하세요.</small>
+          <small>대상 {scannedIp}:{port} 가 제시한 host key 지문입니다. 기기에서 확인한 값과 일치할 때만 저장하세요. 이 지문은 해당 IP 에만 신뢰되며, 기기 IP 가 바뀌면 다시 스캔해야 합니다.</small>
           <pre className="ssh-output">{scanned}</pre>
           <div className="action-row">
-            <button onClick={saveConfig} disabled={busy || !username || !password}>이 지문을 신뢰하고 저장</button>
+            <button onClick={saveConfig} disabled={busy || !username || !password || !scannedIp}>이 지문을 신뢰하고 저장</button>
           </div>
         </div>
       )}

@@ -14,14 +14,33 @@ export const readState = (name) => {
 // from the parent directory. Restrict the credentials file to the current
 // user so other local accounts on a shared machine cannot read the API key.
 // ACL 제한이 실패하면 비밀값을 담은 파일을 남기지 않도록 실패로 처리한다(fail closed).
-const restrictAclToCurrentUser = (filePath) => {
+const currentAccount = () => {
   const account = process.env.USERDOMAIN ? `${process.env.USERDOMAIN}\\${process.env.USERNAME}` : process.env.USERNAME
   if (!account) throw new Error('현재 사용자 계정을 확인할 수 없습니다.')
-  execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${account}:F`], { stdio: 'ignore' })
+  return account
+}
+const restrictAclToCurrentUser = (filePath) => {
+  execFileSync('icacls', [filePath, '/inheritance:r', '/grant:r', `${currentAccount()}:F`], { stdio: 'ignore' })
+}
+
+// 상태 디렉터리는 소유자만 접근하도록 만든다. Unix는 0700(기존 디렉터리도 chmod),
+// Windows는 새로 만들었을 때 한 번만 현재 사용자·SYSTEM·Administrators(SID)로 ACL을 제한한다.
+// 실패해도 경고만 남기고 계속 진행한다(파일 자체는 별도로 보호된다).
+export const ensureStateDir = (dir = getStateDir(), { platform = process.platform, run = execFileSync } = {}) => {
+  const created = fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  try {
+    if (platform !== 'win32') {
+      fs.chmodSync(dir, 0o700)
+    } else if (created) {
+      run('icacls', [dir, '/inheritance:r', '/grant:r', `${currentAccount()}:(OI)(CI)F`, '*S-1-5-18:(OI)(CI)F', '*S-1-5-32-544:(OI)(CI)F'], { stdio: 'ignore' })
+    }
+  } catch (error) {
+    console.warn(`[credentials] 상태 디렉터리 권한 제한 실패 (${dir}): ${error.message}`)
+  }
 }
 
 export const writeState = (name, value, { restrictToOwner = false } = {}) => {
-  fs.mkdirSync(getStateDir(), { recursive: true })
+  ensureStateDir()
   const target = path.join(getStateDir(), name)
   const temporary = `${target}.${process.pid}.tmp`
   const restrictFirst = restrictToOwner && process.platform === 'win32'
@@ -69,7 +88,7 @@ const isStaleLock = (file) => {
   try { process.kill(info.pid, 0); return false } catch (probe) { return probe.code === 'ESRCH' }
 }
 export const acquireLock = (name) => {
-  fs.mkdirSync(getStateDir(), { recursive: true })
+  ensureStateDir()
   const file = path.join(getStateDir(), `${name}.lock`)
   try {
     const fd = fs.openSync(file, 'wx', 0o600)

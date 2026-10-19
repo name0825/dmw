@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
@@ -27,10 +28,25 @@ const normalizeList = (value?: string): string[] =>
     .map((entry) => entry.trim())
     .filter(Boolean)
 
+const normalizedNodeEnv = (): string => (process.env.NODE_ENV || '').trim().toLowerCase()
+
 /**
- * Application environment mode. Defaults to 'development' if NODE_ENV is not set.
+ * True only when NODE_ENV is explicitly 'development' or 'test'. Placeholder
+ * secrets and skipped production checks are allowed in these modes only.
  */
-export const APP_ENV = process.env.NODE_ENV || 'development'
+const allowsDevDefaults = (): boolean => ['development', 'test'].includes(normalizedNodeEnv())
+
+/**
+ * True for every NODE_ENV except 'development' and 'test' (including unset, 'prod',
+ * 'staging'). Use this, never `APP_ENV === 'production'`, to gate dev-only relaxations.
+ */
+export const isProductionLike = (): boolean => !allowsDevDefaults()
+
+/**
+ * Application environment mode. Fails closed: an unset NODE_ENV is treated as
+ * 'production' so a bare `npm start` never falls back to dev defaults.
+ */
+export const APP_ENV = normalizedNodeEnv() || 'production'
 
 /**
  * Server port number. PORT (alias for SERVER_PORT) takes precedence, then
@@ -51,10 +67,10 @@ export const BIND_HOST = process.env.BIND_HOST || '0.0.0.0'
 
 /**
  * JWT secret key for token signing.
- * Must be configured via JWT_SECRET environment variable in production.
- * Defaults to 'dev-secret' in non-production environments.
+ * Must be configured via JWT_SECRET unless NODE_ENV is explicitly 'development' or 'test',
+ * where it defaults to 'dev-secret'.
  */
-export const JWT_SECRET = process.env.JWT_SECRET || (APP_ENV === 'production' ? '' : 'dev-secret')
+export const JWT_SECRET = process.env.JWT_SECRET || (allowsDevDefaults() ? 'dev-secret' : '')
 
 /**
  * Path to the SQLite database file. Defaults to 'data/dmw.db' relative to cwd.
@@ -73,10 +89,10 @@ export const SSH_KEY_PATH = process.env.SSH_KEY_PATH || path.join(path.dirname(D
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'admin@dmw.local'
 
 /**
- * Admin account password. Must be set via ADMIN_PASSWORD in production.
- * Defaults to 'admin123' in non-production environments.
+ * Admin account password. Must be set via ADMIN_PASSWORD unless NODE_ENV is
+ * explicitly 'development' or 'test', where it defaults to 'admin123'.
  */
-export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (APP_ENV === 'production' ? '' : 'admin123')
+export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || (allowsDevDefaults() ? 'admin123' : '')
 
 /**
  * List of allowed CORS origins from environment variables.
@@ -92,7 +108,7 @@ const cookieSecureRaw = process.env.COOKIE_SECURE
 export const COOKIE_SECURE =
   cookieSecureRaw !== undefined
     ? cookieSecureRaw === 'true'
-    : APP_ENV === 'production'
+    : isProductionLike()
 
 /**
  * Explicit broadcast address for Wake-on-LAN packets.
@@ -117,10 +133,11 @@ const PLACEHOLDER_ADMIN_PASSWORDS = ['admin123', 'replace-with-strong-password']
 /** Minimum acceptable JWT_SECRET length in production. */
 const MIN_JWT_SECRET_LENGTH = 32
 
-export const validateRuntimeConfig = (): void => {
-  const runtimeEnv = (process.env.NODE_ENV || APP_ENV).trim().toLowerCase()
+/** Minimum acceptable ADMIN_PASSWORD length outside development/test. */
+const MIN_ADMIN_PASSWORD_LENGTH = 12
 
-  if (runtimeEnv !== 'production') {
+export const validateRuntimeConfig = (): void => {
+  if (allowsDevDefaults()) {
     return
   }
 
@@ -139,11 +156,25 @@ export const validateRuntimeConfig = (): void => {
     throw new Error('ADMIN_PASSWORD must be set in production mode.')
   }
 
+  if (runtimeAdminPassword.length < MIN_ADMIN_PASSWORD_LENGTH) {
+    throw new Error(`ADMIN_PASSWORD must be at least ${MIN_ADMIN_PASSWORD_LENGTH} characters in production mode.`)
+  }
+
   const runtimeCorsOrigin = normalizeList(process.env.CORS_ORIGIN || process.env.FRONTEND_ORIGIN)
 
   if (runtimeCorsOrigin.length === 0) {
     throw new Error(
       'CORS_ORIGIN must be set in production mode (e.g. CORS_ORIGIN=https://example.com,https://app.example.com).'
     )
+  }
+
+  if (process.platform !== 'win32') {
+    try {
+      if (fs.statSync(SSH_KEY_PATH).mode & 0o077) {
+        throw new Error(`SSH server key ${SSH_KEY_PATH} is accessible by group/others; run chmod 600 on it.`)
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
   }
 }

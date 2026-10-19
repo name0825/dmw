@@ -28,7 +28,7 @@ export const registerAuthRoutes = (app: any) => {
 
 import bcrypt from 'bcryptjs'
 import { getDb, withTransaction } from '../database/index.js'
-import { createToken } from '../auth.js'
+import { beginLoginAttempt, createToken } from '../auth.js'
 import {
   issueRefreshToken,
   extractRefreshToken,
@@ -69,6 +69,13 @@ export const handleLogin = async (request: any, reply: any) => {
     return
   }
 
+  const attempt = beginLoginAttempt(email, String(request.ip ?? 'unknown'))
+  if (attempt.lockedMs > 0) {
+    reply.header?.('Retry-After', String(Math.ceil(attempt.lockedMs / 1000)))
+    reply.code(429).send({ message: 'Too many failed attempts. Try again later.' })
+    return
+  }
+
   const user = await getDb().get('SELECT * FROM users WHERE email = ?', [email])
   if (!user) {
     await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
@@ -81,6 +88,7 @@ export const handleLogin = async (request: any, reply: any) => {
     reply.code(401).send({ message: 'Invalid credentials' })
     return
   }
+  attempt.succeed()
 
   const accessToken = createToken(user.email, user.token_version ?? 0)
   const { token } = await issueRefreshToken(user.id)
@@ -205,15 +213,35 @@ export const handleLogout = async (_request: any, reply: any) => {
   const refreshToken = extractRefreshToken(_request)
 
   if (refreshToken) {
-    await withTransaction(async (tx) => {
+    const outcome = await withTransaction(async (tx) => {
       const matched = await findRefreshTokenMatch(refreshToken, tx)
       const revokedMatch = matched ? null : await findRevokedRefreshTokenMatch(refreshToken, tx)
+
+      if (revokedMatch) {
+        const revokedAt = revokedMatch.revoked_at ? new Date(revokedMatch.revoked_at).getTime() : 0
+        if (Date.now() - revokedAt > REFRESH_REUSE_GRACE_MS) {
+          const revokedCount = await revokeAllRefreshTokensForUser(revokedMatch.user_id, tx)
+          await bumpTokenVersion(revokedMatch.user_id, tx)
+          return { status: 'reused' as const, userId: revokedMatch.user_id, revokedCount }
+        }
+      }
+
       const liveToken = matched || (revokedMatch ? await findLiveRotationTip(revokedMatch, tx) : null)
-      if (!liveToken) return
+      if (!liveToken) return { status: 'noop' as const }
 
       await revokeRefreshToken(liveToken.id, tx)
       await bumpTokenVersion(liveToken.user_id, tx)
+      return { status: 'ok' as const }
     })
+
+    if (outcome.status === 'reused') {
+      console.warn(
+        `Refresh token reuse detected on logout for user ${outcome.userId}; revoked ${outcome.revokedCount} active refresh token(s)`,
+      )
+      reply.clearCookie('refreshToken')
+      reply.code(401).send({ message: 'Invalid refresh token' })
+      return
+    }
   }
 
   reply.clearCookie('refreshToken')

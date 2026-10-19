@@ -229,3 +229,17 @@ test('a new-device pairing code adopts an existing unpaired device row instead o
   assert.equal(device.agent_paired, 1)
   assert.equal(device.name, 'Manual Device')
 })
+
+test('heartbeat with a missing metric keeps the previous latest value', async () => {
+  const apiKey = 'coalesce-agent-key-1234567890'
+  const deviceId = await seedPairedDevice(apiKey)
+  const db = getDb()
+
+  await handleHeartbeat(request(apiKey, { cpuUsage: 50, memoryUsage: 30, diskUsage: 20 }), reply())
+  const partialReply = reply()
+  await handleHeartbeat(request(apiKey, { cpuUsage: 60 }), partialReply)
+
+  assert.equal(partialReply.status, 200)
+  const latest = await db.get('SELECT cpu_usage, memory_usage, disk_usage FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+  assert.deepEqual({ ...latest }, { cpu_usage: 60, memory_usage: 30, disk_usage: 20 })
+})

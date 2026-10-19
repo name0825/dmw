@@ -300,7 +300,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
       if (metrics.cpuUsage !== undefined || metrics.memoryUsage !== undefined || metrics.diskUsage !== undefined) {
         await tx.run(
           'INSERT INTO device_metrics_latest (device_id, cpu_usage, memory_usage, disk_usage, updated_at) VALUES (?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(device_id) DO UPDATE SET cpu_usage=excluded.cpu_usage, memory_usage=excluded.memory_usage, disk_usage=excluded.disk_usage, updated_at=excluded.updated_at',
+          'ON CONFLICT(device_id) DO UPDATE SET cpu_usage=COALESCE(excluded.cpu_usage, cpu_usage), memory_usage=COALESCE(excluded.memory_usage, memory_usage), disk_usage=COALESCE(excluded.disk_usage, disk_usage), updated_at=excluded.updated_at',
           [deviceId, metrics.cpuUsage, metrics.memoryUsage, metrics.diskUsage, now]
         )
 

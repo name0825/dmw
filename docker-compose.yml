@@ -34,8 +34,8 @@ services:
 
   web:
     build:
-      context: ./web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: web/Dockerfile
       target: runtime
       args:
         VITE_API_BASE: ${VITE_API_BASE:-}

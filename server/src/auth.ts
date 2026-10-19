@@ -95,12 +95,12 @@ export const isValidJwtToken = (token: string): boolean => {
  */
 export const verifyTokenAndVersion = async (
   token: string,
-): Promise<{ id: number; email: string; token_version: number } | null> => {
+): Promise<{ id: number; email: string; token_version: number; role?: string } | null> => {
   try {
     const decoded = jwt.verify(token, JWT_SECRET) as { email: string; tokenVersion?: number }
     const db = await getDb()
     const user = await db.get(
-      'SELECT id, email, token_version FROM users WHERE email = ?',
+      'SELECT id, email, token_version, role FROM users WHERE email = ?',
       [decoded.email],
     )
     if (!user) return null
@@ -109,6 +109,135 @@ export const verifyTokenAndVersion = async (
   } catch {
     return null
   }
+}
+
+/** Consecutive failures allowed per throttle key before it is temporarily locked. */
+export const ACCOUNT_LOCK_THRESHOLD = 5
+/** First lock duration; doubles with every further failure up to the cap. */
+const ACCOUNT_LOCK_BASE_MS = 30 * 1000
+const ACCOUNT_LOCK_MAX_MS = 15 * 60 * 1000
+/** A failure streak is forgotten after this long without a new failure. */
+const ACCOUNT_FAILURE_TTL_MS = 15 * 60 * 1000
+/** Failures per email (summed over all client IPs) allowed per window before the email is locked. */
+export const EMAIL_FAILURE_CEILING = 100
+const EMAIL_FAILURE_WINDOW_MS = 60 * 60 * 1000
+export const ACCOUNT_THROTTLE_MAX_ENTRIES = 10_000
+
+type ThrottleEntry = { count: number; startedAt: number; lockedUntil: number; expiresAt: number }
+
+/** Streak counters keyed by `login|email|ip` and `ssh|userId`; kept apart so one flow cannot lock the other. */
+const streakStates = new Map<string, ThrottleEntry>()
+/** Hourly per-email failure totals across all IPs (distributed-guessing ceiling). */
+const emailCeilingStates = new Map<string, ThrottleEntry>()
+
+const normalizeEmail = (email: string): string => email.trim().toLowerCase()
+
+const lockRemaining = (states: Map<string, ThrottleEntry>, key: string, now: number): number => {
+  const state = states.get(key)
+  if (!state) return 0
+  if (state.expiresAt <= now) {
+    states.delete(key)
+    return 0
+  }
+  return Math.max(0, state.lockedUntil - now)
+}
+
+/**
+ * Frees one slot when the map is full. Expired entries go first, then the oldest unlocked
+ * entry; an entry with lockedUntil > now is never evicted.
+ * @returns false when every entry is currently locked and no slot could be freed
+ */
+const makeRoom = (states: Map<string, ThrottleEntry>, now: number): boolean => {
+  if (states.size < ACCOUNT_THROTTLE_MAX_ENTRIES) return true
+  let unlockedKey: string | undefined
+  for (const [key, state] of states) {
+    if (state.expiresAt <= now) {
+      states.delete(key)
+      return true
+    }
+    if (unlockedKey === undefined && state.lockedUntil <= now) unlockedKey = key
+  }
+  if (unlockedKey === undefined) return false
+  states.delete(unlockedKey)
+  return true
+}
+
+const recordStreakFailure = (key: string, now: number): boolean => {
+  const previous = streakStates.get(key)
+  const live = previous && previous.expiresAt > now ? previous : null
+  const count = (live?.count ?? 0) + 1
+  const lockMs =
+    count >= ACCOUNT_LOCK_THRESHOLD
+      ? Math.min(ACCOUNT_LOCK_BASE_MS * 2 ** (count - ACCOUNT_LOCK_THRESHOLD), ACCOUNT_LOCK_MAX_MS)
+      : 0
+  if (!streakStates.delete(key) && !makeRoom(streakStates, now)) return false
+  streakStates.set(key, { count, startedAt: now, lockedUntil: now + lockMs, expiresAt: now + ACCOUNT_FAILURE_TTL_MS })
+  return true
+}
+
+const recordEmailFailure = (key: string, now: number): boolean => {
+  const previous = emailCeilingStates.get(key)
+  const live = previous && previous.expiresAt > now ? previous : null
+  const count = (live?.count ?? 0) + 1
+  const startedAt = live?.startedAt ?? now
+  const expiresAt = startedAt + EMAIL_FAILURE_WINDOW_MS
+  if (!emailCeilingStates.delete(key) && !makeRoom(emailCeilingStates, now)) return false
+  emailCeilingStates.set(key, { count, startedAt, lockedUntil: count >= EMAIL_FAILURE_CEILING ? expiresAt : 0, expiresAt })
+  return true
+}
+
+export type PasswordAttempt = {
+  /** Milliseconds the caller must wait; when > 0 the attempt was refused and nothing was recorded. */
+  lockedMs: number
+  /** Call after the password verified: forgets the failure counted up front. */
+  succeed: () => void
+}
+
+const refused = (lockedMs: number): PasswordAttempt => ({ lockedMs, succeed: () => {} })
+
+/**
+ * Checks the lock and, if open, counts the attempt as a failure immediately — before the slow
+ * password hash comparison — so concurrent requests cannot all slip past a lock that has just
+ * lapsed. The caller invokes succeed() on a correct password to undo the count.
+ * Refuses (fail closed) when the key cannot be tracked because the table holds only locked entries.
+ */
+const beginAttempt = (key: string, emailKey: string | null, now: number): PasswordAttempt => {
+  const lockedMs = Math.max(
+    lockRemaining(streakStates, key, now),
+    emailKey ? lockRemaining(emailCeilingStates, emailKey, now) : 0,
+  )
+  if (lockedMs > 0) return refused(lockedMs)
+  if (!recordStreakFailure(key, now) || (emailKey && !recordEmailFailure(emailKey, now))) {
+    return refused(ACCOUNT_LOCK_BASE_MS)
+  }
+  return {
+    lockedMs: 0,
+    succeed: () => {
+      streakStates.delete(key)
+      if (emailKey) emailCeilingStates.delete(emailKey)
+    },
+  }
+}
+
+/**
+ * Login throttle, keyed on (lowercased email, client IP) so one LAN host cannot lock the
+ * account for everyone, plus an hourly per-email ceiling to bound distributed guessing.
+ * Unknown emails are tracked identically so lock state does not reveal whether an account exists.
+ * State is in memory and resets on restart.
+ */
+export const beginLoginAttempt = (email: string, ip: string, now = Date.now()): PasswordAttempt => {
+  const normalized = normalizeEmail(email)
+  return beginAttempt(`login|${normalized}|${ip}`, normalized, now)
+}
+
+/** SSH password re-confirmation throttle, keyed on the authenticated user id and independent of login. */
+export const beginSshConfirmAttempt = (userId: number, now = Date.now()): PasswordAttempt =>
+  beginAttempt(`ssh|${userId}`, null, now)
+
+/** Drops all throttle state (tests). */
+export const resetPasswordThrottles = (): void => {
+  streakStates.clear()
+  emailCeilingStates.clear()
 }
 
 /**

@@ -28,3 +28,9 @@ test('does not create another alert for an already offline device', () => {
 
   assert.deepEqual(alerts, [])
 })
+
+test('does not create an offline alert when a WAKE_TIMEOUT device goes OFFLINE', () => {
+  const alerts = evaluateOfflineAlert({ id: 42, status: STATUS_OFFLINE }, 'WAKE_TIMEOUT')
+
+  assert.deepEqual(alerts, [])
+})

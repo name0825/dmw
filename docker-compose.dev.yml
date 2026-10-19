@@ -22,7 +22,7 @@ services:
     build:
       target: source
     restart: "no"
-    command: ["npm", "run", "dev"]
+    command: ["npm", "--workspace", "web", "run", "dev"]
     volumes:
-      - ./web:/app
-      - /app/node_modules
+      - ./web:/app/web
+      - /app/web/node_modules

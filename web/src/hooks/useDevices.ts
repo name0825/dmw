@@ -149,6 +149,8 @@ export const useDevices = (
       if (res.ok) {
         setMessage(data?.message || '디바이스 삭제 완료')
         await loadDevices()
+      } else {
+        setMessage(data?.message || '삭제 실패')
       }
     } catch {
       setMessage('네트워크 오류로 요청에 실패했습니다.')

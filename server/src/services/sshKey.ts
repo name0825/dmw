@@ -3,7 +3,7 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import ssh2 from 'ssh2'
 
-import { SSH_KEY_PATH } from '../config.js'
+import { SSH_KEY_PATH, isProductionLike } from '../config.js'
 
 const { utils } = ssh2
 
@@ -22,11 +22,16 @@ const derivePublicKey = (privateKey: string): string => {
 const readExisting = async (keyPath: string): Promise<string | null> => {
   try {
     const privateKey = await fs.readFile(keyPath, 'utf8')
-    if (process.platform !== 'win32' && !permissionWarned) {
+    if (process.platform !== 'win32') {
       const { mode } = await fs.stat(keyPath)
       if (mode & 0o077) {
-        permissionWarned = true
-        console.warn(`SSH server key ${keyPath} is accessible by group/others; restrict it to owner-only (chmod 600)`)
+        if (isProductionLike()) {
+          throw new Error(`SSH server key ${keyPath} is accessible by group/others; run chmod 600 on it`)
+        }
+        if (!permissionWarned) {
+          permissionWarned = true
+          console.warn(`SSH server key ${keyPath} is accessible by group/others; restrict it to owner-only (chmod 600)`)
+        }
       }
     }
     return privateKey
