@@ -38,7 +38,7 @@ jobs:
             echo "ADMIN_EMAIL=$ADMIN_EMAIL"
             echo "ADMIN_PASSWORD=$ADMIN_PASSWORD"
           } > .env
-      - run: docker compose up -d --build server
+      - run: docker compose up -d --build
       - name: Wait for server health
         run: |
           for i in $(seq 1 60); do
@@ -47,6 +47,14 @@ jobs:
           done
           docker compose logs server
           exit 1
+      - name: Web smoke checks
+        run: |
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:5173/ && break
+            sleep 2
+          done
+          curl -fsS http://127.0.0.1:5173/ | grep -q '<div id="root">'
+          curl -fsS http://127.0.0.1:5173/api/health
       - name: Create a device
         run: |
           TOKEN=$(curl -fsS -X POST http://127.0.0.1:3001/auth/login \
