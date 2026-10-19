@@ -1,4 +1,5 @@
-import test, { after, beforeEach } from 'node:test'
+import test, { after, beforeEach, mock } from 'node:test'
+import bcrypt from 'bcryptjs'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -70,6 +71,50 @@ test('login with wrong password is rejected', async () => {
     })
     assert.equal(response.statusCode, 401)
   } finally {
+    await app.close()
+  }
+})
+
+test('login with a non-string password or email is rejected with 400', async () => {
+  const app = await buildApp()
+  try {
+    const payloads = [
+      { email: ADMIN_EMAIL, password: 12345 },
+      { email: ADMIN_EMAIL, password: { $ne: '' } },
+      { email: ADMIN_EMAIL, password: ['a'] },
+      { email: 123, password: 'x' },
+      { email: { $ne: '' }, password: 'x' },
+      { email: ADMIN_EMAIL, password: '' },
+    ]
+    for (const payload of payloads) {
+      const response = await app.inject({ method: 'POST', url: '/auth/login', payload })
+      assert.equal(response.statusCode, 400, JSON.stringify(payload))
+    }
+  } finally {
+    await app.close()
+  }
+})
+
+test('login with an unknown email runs bcrypt.compare and returns the same 401 as a wrong password', async () => {
+  const app = await buildApp()
+  const compareSpy = mock.method(bcrypt, 'compare')
+  try {
+    const unknown = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: 'nobody@example.invalid', password: 'whatever' },
+    })
+    assert.equal(compareSpy.mock.callCount(), 1)
+    const wrong = await app.inject({
+      method: 'POST',
+      url: '/auth/login',
+      payload: { email: ADMIN_EMAIL, password: 'wrong-password' },
+    })
+    assert.equal(unknown.statusCode, 401)
+    assert.equal(wrong.statusCode, 401)
+    assert.equal(unknown.body, wrong.body)
+  } finally {
+    compareSpy.mock.restore()
     await app.close()
   }
 })

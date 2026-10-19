@@ -53,6 +53,8 @@ const setRefreshCookie = (reply: any, token: string) => {
   reply.setCookie('refreshToken', token, REFRESH_COOKIE_OPTIONS)
 }
 
+const DUMMY_PASSWORD_HASH = bcrypt.hashSync('dmw-dummy-password', 10)
+
 /**
  * Login request handler
  * Validates credentials and issues access/refresh tokens
@@ -61,14 +63,15 @@ const setRefreshCookie = (reply: any, token: string) => {
  * @returns Login response object
  */
 export const handleLogin = async (request: any, reply: any) => {
-  const { email, password } = (request.body || {}) as { email?: string; password?: string }
-  if (!email || !password) {
+  const { email, password } = (request.body || {}) as { email?: unknown; password?: unknown }
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     reply.code(400).send({ message: 'Email and password are required' })
     return
   }
 
   const user = await getDb().get('SELECT * FROM users WHERE email = ?', [email])
   if (!user) {
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
     reply.code(401).send({ message: 'Invalid credentials' })
     return
   }

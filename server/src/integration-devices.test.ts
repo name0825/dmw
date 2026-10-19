@@ -143,6 +143,48 @@ test('a pairing code can only be used once', async () => {
   }
 })
 
+test('device create and update reject a missing body or an invalid name', async () => {
+  const app = buildApp()
+  try {
+    const db = getDb()
+    const inserted = await db.run(
+      'INSERT INTO devices (name, mac_address, ip_address, status) VALUES (?, ?, ?, ?)',
+      ['Keep Name', 'AA:BB:CC:DD:EE:08', '192.168.1.57', 'NOT_PAIRED'],
+    )
+    const headers = await adminAuthHeader()
+    const base = { mac_address: 'AA:BB:CC:DD:EE:08', ip_address: '192.168.1.57' }
+    const payloads: Array<unknown> = [
+      undefined,
+      { ...base },
+      { ...base, name: 123 },
+      { ...base, name: '   ' },
+      { ...base, name: 'x'.repeat(101) },
+    ]
+
+    for (const payload of payloads) {
+      const create = await app.inject({ method: 'POST', url: '/devices', headers, payload: payload as any })
+      assert.equal(create.statusCode, 400)
+      const update = await app.inject({ method: 'PATCH', url: `/devices/${inserted.lastID}`, headers, payload: payload as any })
+      assert.equal(update.statusCode, 400)
+    }
+
+    const row = await db.get('SELECT name FROM devices WHERE id = ?', [inserted.lastID])
+    assert.equal(row.name, 'Keep Name')
+    assert.equal((await db.get('SELECT COUNT(*) AS count FROM devices')).count, 1)
+
+    const trimmed = await app.inject({
+      method: 'PATCH',
+      url: `/devices/${inserted.lastID}`,
+      headers,
+      payload: { ...base, name: '  Padded  ' },
+    })
+    assert.equal(trimmed.statusCode, 200)
+    assert.equal((await db.get('SELECT name FROM devices WHERE id = ?', [inserted.lastID])).name, 'Padded')
+  } finally {
+    await app.close()
+  }
+})
+
 test('a device can be updated', async () => {
   const app = buildApp()
   try {

@@ -4,6 +4,8 @@ import { isValidIp, isValidMac, normalizeIp, normalizeMac } from '../utils/valid
 import { sendWakePacket } from './wake.js'
 import { broadcastState } from './ws.js'
 
+const MAX_DEVICE_NAME_LENGTH = 100
+
 /**
  * Handles getting the dashboard summary.
  */
@@ -101,8 +103,10 @@ export const handleGetAlerts = async (_request: any, reply: any) => {
  * 기기 행은 에이전트가 페어링에 성공하는 시점에 생성/재사용된다.
  */
 export const handleCreateDevice = async (request: any, reply: any) => {
-  const { name, mac_address, ip_address } = request.body
-  if (!name || !isValidMac(mac_address) || !isValidIp(ip_address)) {
+  const body = request.body ?? {}
+  const { mac_address, ip_address } = body
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  if (!name || name.length > MAX_DEVICE_NAME_LENGTH || !isValidMac(mac_address) || !isValidIp(ip_address)) {
     reply.code(400).send({ message: 'Valid name, MAC address, and IP address are required' })
     return
   }
@@ -161,8 +165,10 @@ export const handleCreateDevice = async (request: any, reply: any) => {
  */
 export const handleUpdateDevice = async (request: any, reply: any) => {
   const { id } = request.params
-  const { name, mac_address, ip_address } = request.body
-  if (!name || !isValidMac(mac_address) || !isValidIp(ip_address)) {
+  const body = request.body ?? {}
+  const { mac_address, ip_address } = body
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  if (!name || name.length > MAX_DEVICE_NAME_LENGTH || !isValidMac(mac_address) || !isValidIp(ip_address)) {
     reply.code(400).send({ message: 'Valid name, MAC address, and IP address are required' })
     return
   }
