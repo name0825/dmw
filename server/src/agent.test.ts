@@ -91,6 +91,22 @@ test('unpair revokes the key and rejects every later heartbeat', async () => {
   assert.deepEqual(heartbeatReply.body, { message: 'Invalid or missing API key' })
 })
 
+test('unpair removes the latest metrics row of the device', async () => {
+  const apiKey = 'metrics-agent-key-1234567890'
+  const deviceId = await seedPairedDevice(apiKey)
+  await getDb().run(
+    'INSERT INTO device_metrics_latest (device_id, cpu_usage, memory_usage, disk_usage) VALUES (?, 99, 99, 99)',
+    [deviceId],
+  )
+
+  const unpairReply = reply()
+  await handleUnpair(request(apiKey), unpairReply)
+  assert.equal(unpairReply.status, 200)
+
+  const row = await getDb().get('SELECT device_id FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+  assert.equal(row, undefined)
+})
+
 test('unpair bypasses global JWT middleware but still requires the agent API key', async () => {
   const apiKey = 'fastify-agent-key-123456'
   await seedPairedDevice(apiKey)

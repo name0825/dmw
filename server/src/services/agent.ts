@@ -365,7 +365,9 @@ export const handleUnpair = async (request: any, reply: any) => {
         'UPDATE devices SET agent_key_hash = NULL, agent_key_hint = NULL, agent_paired = 0, paired_at = NULL, last_seen = NULL, status = ?, updated_at = ? WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
         [STATUS_NOT_PAIRED, now, device.id, device.agent_key_hash, agentKeyHint]
       )
-      return result.changes === 1
+      if (result.changes !== 1) return false
+      await tx.run('DELETE FROM device_metrics_latest WHERE device_id = ?', [device.id])
+      return true
     })
 
     if (!unpaired) {

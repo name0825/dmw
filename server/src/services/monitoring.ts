@@ -114,7 +114,8 @@ export const updateOfflineStates = async () => {
  */
 export const monitorAlerts = async () => {
   const devices = await getDb().all(
-    'SELECT d.*, m.cpu_usage, m.memory_usage, m.disk_usage FROM devices d LEFT JOIN device_metrics_latest m ON m.device_id = d.id ORDER BY d.id DESC',
+    'SELECT d.*, m.cpu_usage, m.memory_usage, m.disk_usage FROM devices d JOIN device_metrics_latest m ON m.device_id = d.id WHERE d.status = ? AND d.agent_paired = 1 ORDER BY d.id DESC',
+    [STATUS_ONLINE],
   )
 
   const alerts = devices.flatMap((device: any) => evaluateAlerts(device))
