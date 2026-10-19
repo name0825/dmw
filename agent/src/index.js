@@ -10,7 +10,7 @@ import { collectMetrics } from './metrics/index.js'
 import { sleep, computeBackoffDelay } from './retry.js'
 import { HttpError } from './http.js'
 import { configureAutostart, ensureAutostart, installLauncher } from './autostart.js'
-import { checkForUpdate } from './update.js'
+import { checkForUpdate, confirmActiveVersion } from './update.js'
 
 const HELP_TEXT = `dmw-agent - DMW 장치 관리 에이전트
 
@@ -73,6 +73,7 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
   let updateTask
   let consecutiveFailures = 0
   let nextDelay = intervalMs
+  let confirmed = false
   const stop = () => { running = false }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
@@ -92,7 +93,13 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
         lastKey = credentials.apiKey
         try {
           const metrics = await collectMetrics()
-          if (loadCredentials()?.apiKey === credentials.apiKey) await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+          if (loadCredentials()?.apiKey === credentials.apiKey) {
+            await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+            if (!confirmed) {
+              confirmed = true
+              try { confirmActiveVersion() } catch (confirmError) { console.warn(`[update] 활성 버전 확정 실패: ${confirmError.message}`) }
+            }
+          }
           consecutiveFailures = 0
           nextDelay = intervalMs
         } catch (error) {
@@ -152,7 +159,9 @@ const main = async () => {
   }
   writeState('settings.json', { ...readState('settings.json'), interval })
   await ensureCredentials(args)
-  installLauncher()
+  if (readState('settings.json')?.autostart === true) {
+    try { configureAutostart(true) } catch (error) { console.warn(`자동실행 갱신 실패: ${error.message}`) }
+  } else installLauncher()
   await runHeartbeatLoop(interval, args.noUpdate)
   if (process.exitCode === 75 && !process.env.DMW_LAUNCHER) {
     process.exitCode = 0

@@ -6,11 +6,12 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
 import { autostartEntry, installLauncher } from '../src/autostart.js'
 import { parseArgs } from '../src/config.js'
-import { checkForUpdate, isNewerVersion, validateBundle } from '../src/update.js'
+import { checkForUpdate, confirmActiveVersion, isNewerVersion, validateBundle } from '../src/update.js'
+import { acquireLock } from '../src/credentials.js'
 import { HttpError, requestJson } from '../src/http.js'
 import { computeBackoffDelay } from '../src/retry.js'
 
@@ -70,8 +71,9 @@ test('CLI options expose unpairing, autostart, update, and background controls',
 test('autostart entries target only the generated launcher for each supported platform', () => {
   const windows = autostartEntry({ platform: 'win32', appData: 'C:/Users/test/AppData/Roaming', node: 'C:/Program Files/node.exe', launcher: 'C:/agent/launcher.cjs' })
   assert.match(windows.file, /Startup[\\/]DMW Agent\.vbs$/)
-  assert.match(windows.content, /node\.exe/)
-  assert.match(windows.content, /launcher\.cjs/)
+  const windowsText = windows.content.subarray(2).toString('utf16le')
+  assert.match(windowsText, /node\.exe/)
+  assert.match(windowsText, /launcher\.cjs/)
 
   const mac = autostartEntry({ platform: 'darwin', home: '/Users/test', node: '/usr/local/bin/node', launcher: '/state/launcher.cjs' })
   assert.match(mac.file, /Users[\\/]test[\\/]Library[\\/]LaunchAgents[\\/]io\.dmw\.agent\.plist$/)
@@ -82,6 +84,126 @@ test('autostart entries target only the generated launcher for each supported pl
   assert.match(linux.file, /home[\\/]test[\\/]\.config[\\/]autostart[\\/]dmw-agent\.desktop$/)
   assert.match(linux.content, /^\[Desktop Entry\]/)
   assert.match(linux.content, /Exec="\/usr\/bin\/node" "\/state\/launcher\.cjs"/)
+})
+
+test('windows .vbs is UTF-16LE with BOM and keeps non-ASCII launcher paths intact', () => {
+  const { content } = autostartEntry({ platform: 'win32', appData: 'C:/Users/test/AppData/Roaming', node: 'C:/Program Files/node.exe', launcher: 'C:/사용자/에이전트/launcher.cjs' })
+  assert.deepEqual([...content.subarray(0, 2)], [0xff, 0xfe])
+  assert.match(content.subarray(2).toString('utf16le'), /C:\/사용자\/에이전트\/launcher\.cjs/)
+})
+
+const currentBoot = () => Math.round(Date.now() / 1000 - os.uptime())
+
+test('acquireLock reclaims empty-old, dead-pid, and pre-reboot locks but respects live ones', async () => {
+  await withStateDir(async (state) => {
+    const lock = path.join(state, 'probe.lock')
+
+    fs.writeFileSync(lock, '')
+    const past = new Date(Date.now() - 120000)
+    fs.utimesSync(lock, past, past)
+    const release = acquireLock('probe')
+    assert.equal(typeof release, 'function')
+    assert.equal(JSON.parse(fs.readFileSync(lock, 'utf8')).pid, process.pid)
+    release()
+
+    const dead = spawn(process.execPath, ['-e', ''], { stdio: 'ignore' })
+    await new Promise((resolve) => dead.once('exit', resolve))
+    fs.writeFileSync(lock, JSON.stringify({ pid: dead.pid, boot: currentBoot() }))
+    const afterDead = acquireLock('probe')
+    assert.equal(typeof afterDead, 'function')
+    afterDead()
+
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, boot: currentBoot() - 100000 }))
+    assert.equal(acquireLock('probe'), null)
+    fs.utimesSync(lock, past, past)
+    const afterReboot = acquireLock('probe')
+    assert.equal(typeof afterReboot, 'function')
+    afterReboot()
+
+    fs.writeFileSync(lock, String(process.pid))
+    assert.equal(acquireLock('probe'), null)
+
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, boot: currentBoot() }))
+    assert.equal(acquireLock('probe'), null)
+
+    fs.writeFileSync(lock, '')
+    assert.equal(acquireLock('probe'), null)
+  })
+})
+
+test('installLauncher run from a versions/ dir keeps the existing launcher bundled fallback when bundled.json is missing', async () => {
+  await withStateDir(async (state) => {
+    const bundledEntry = path.join(state, 'bundled-root', 'index.js')
+    fs.mkdirSync(path.dirname(bundledEntry), { recursive: true })
+    fs.writeFileSync(bundledEntry, '')
+    fs.writeFileSync(path.join(state, 'launcher.cjs'), `const fallback = ${JSON.stringify(bundledEntry)};\n`)
+    const versionRoot = path.join(state, 'versions', '9.9.9')
+    fs.mkdirSync(path.join(versionRoot, 'src'), { recursive: true })
+    fs.writeFileSync(path.join(versionRoot, 'package.json'), '{"type":"module"}')
+    for (const name of ['autostart.js', 'credentials.js']) fs.copyFileSync(fileURLToPath(new URL(`../src/${name}`, import.meta.url)), path.join(versionRoot, 'src', name))
+    const copied = await import(pathToFileURL(path.join(versionRoot, 'src', 'autostart.js')).href)
+    copied.installLauncher()
+    assert.ok(fs.readFileSync(path.join(state, 'launcher.cjs'), 'utf8').includes(`const fallback = ${JSON.stringify(bundledEntry)};`))
+    assert.equal(fs.existsSync(path.join(state, 'bundled.json')), false)
+  })
+})
+
+const runLauncher =(state) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, [installLauncher()], { env: { ...process.env, DMW_STATE_DIR: state, DMW_RESTART_DELAY_MS: '10' }, stdio: 'ignore' })
+  child.once('error', reject)
+  child.once('exit', (code) => resolve(code))
+})
+const writeVersion = (state, version, source) => {
+  const dir = path.join(state, 'versions', version, 'src')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'index.js'), source)
+}
+
+test('launcher rolls back a pending version that keeps crashing and blocks it from reinstalling', async () => {
+  await withStateDir(async (state) => {
+    writeVersion(state, '1.1.0', 'process.exit(1)')
+    writeVersion(state, '1.0.0', "const fs = require('node:fs'); const path = require('node:path'); fs.writeFileSync(path.join(process.env.DMW_STATE_DIR, 'rollback-marker'), 'ok'); process.exit(0)")
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.1.0', pending: true, previous: '1.0.0' }))
+    assert.equal(await runLauncher(state), 0)
+    assert.equal(fs.readFileSync(path.join(state, 'rollback-marker'), 'utf8'), 'ok')
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.0.0' })
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'rollback.json'), 'utf8')), { version: '1.1.0' })
+
+    const fetchImpl = async () => response(JSON.stringify({ tag_name: 'v1.1.0', assets: [] }))
+    assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), false)
+  })
+})
+
+test('launcher restarts a non-pending version that crashes until it exits cleanly', async () => {
+  await withStateDir(async (state) => {
+    writeVersion(state, '1.0.0', "const fs = require('node:fs'); const path = require('node:path'); const file = path.join(process.env.DMW_STATE_DIR, 'runs'); fs.appendFileSync(file, 'x'); process.exit(fs.readFileSync(file, 'utf8').length >= 2 ? 0 : 1)")
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    assert.equal(await runLauncher(state), 0)
+    assert.equal(fs.readFileSync(path.join(state, 'runs'), 'utf8'), 'xx')
+    assert.equal(fs.existsSync(path.join(state, 'rollback.json')), false)
+  })
+})
+
+test('confirmActiveVersion clears pending only for the matching version', async () => {
+  await withStateDir(async (state) => {
+    const file = path.join(state, 'active.json')
+    fs.writeFileSync(file, JSON.stringify({ version: '1.1.0', pending: true, previous: '1.0.0' }))
+    assert.equal(confirmActiveVersion('1.0.0'), false)
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pending, true)
+    assert.equal(confirmActiveVersion('1.1.0'), true)
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).pending, undefined)
+    assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).version, '1.1.0')
+  })
+})
+
+test('checkForUpdate skips a version recorded in rollback.json', async () => {
+  await withStateDir(async (state) => {
+    fs.writeFileSync(path.join(state, 'active.json'), JSON.stringify({ version: '1.0.0' }))
+    fs.writeFileSync(path.join(state, 'rollback.json'), JSON.stringify({ version: '1.1.0' }))
+    const fetchImpl = async () => response(JSON.stringify({ tag_name: 'v1.1.0', assets: [] }))
+    assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), false)
+    assert.equal(fs.existsSync(path.join(state, 'versions')), false)
+  })
 })
 
 test('launcher restarts once when an active version requests update handoff', async () => {
@@ -184,7 +306,7 @@ test('verified newer release becomes active only after its entry point starts', 
     }
 
     assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), true)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0' })
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0', pending: true })
     assert.equal(fs.readFileSync(path.join(state, 'versions', '1.1.0', 'src', 'index.js'), 'utf8'), files['src/index.js'])
   })
 })
@@ -211,7 +333,7 @@ test('validated existing release is recovered as active without overwriting it',
     }
 
     assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), true)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0' })
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0', pending: true, previous: '1.0.0' })
     assert.equal(fs.readFileSync(path.join(destination, 'src', 'index.js'), 'utf8'), files['src/index.js'])
   })
 })
@@ -239,7 +361,7 @@ test('a stale versions/<next> directory with mismatched contents is replaced and
     }
 
     assert.equal(await checkForUpdate({ fetchImpl, version: '1.0.0' }), true)
-    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0' })
+    assert.deepEqual(JSON.parse(fs.readFileSync(path.join(state, 'active.json'), 'utf8')), { version: '1.1.0', pending: true, previous: '1.0.0' })
     assert.equal(fs.readFileSync(path.join(destination, 'src', 'index.js'), 'utf8'), files['src/index.js'])
   })
 })

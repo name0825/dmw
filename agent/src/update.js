@@ -30,6 +30,17 @@ export const validateBundle = (bytes, checksum, version) => {
   if (pkg.version !== version || pkg.type !== 'module' || Object.keys(pkg.dependencies || {}).length) throw new Error('업데이트 package.json 검증 실패')
   return bundle
 }
+const activatePending = (next) => {
+  const current = readState('active.json')
+  const previous = current?.pending ? current.previous : current?.version
+  writeState('active.json', { version: next, pending: true, ...(previous ? { previous } : {}) })
+}
+export const confirmActiveVersion = (version = currentVersion) => {
+  const active = readState('active.json')
+  if (!active?.pending || active.version !== version) return false
+  writeState('active.json', { version, ...(active.previous ? { previous: active.previous } : {}) })
+  return true
+}
 const download = async (url, limit, fetchImpl) => {
   const response = await fetchImpl(url, { headers: { Accept: 'application/vnd.github+json', 'User-Agent': 'dmw-agent' }, signal: AbortSignal.timeout(30000) })
   if (!response.ok) throw new Error(`GitHub HTTP ${response.status}`)
@@ -49,7 +60,7 @@ export const checkForUpdate = async ({ fetchImpl = fetch, version = currentVersi
     const release = JSON.parse((await download('https://api.github.com/repos/name0825/dmw/releases/latest', 1024 * 1024, fetchImpl)).toString('utf8'))
     const next = String(release.tag_name || '').replace(/^(agent-)?v/, '')
     if (release.draft || release.prerelease || !isNewerVersion(next, version)) return false
-    if (readState('active.json')?.version === next) return false
+    if (readState('active.json')?.version === next || readState('rollback.json')?.version === next) return false
     const name = `dmw-agent-${next}.json`
     const assetUrl = (assetName) => {
       const asset = release.assets?.find((item) => item.name === assetName)
@@ -70,7 +81,7 @@ export const checkForUpdate = async ({ fetchImpl = fetch, version = currentVersi
       if (matches) {
         const check = spawnSync(process.execPath, [path.join(destination, 'src/index.js'), '--help'], { timeout: 15000, encoding: 'utf8', windowsHide: true })
         if (check.error || check.status !== 0) throw new Error('기존 업데이트 시작 검증 실패')
-        writeState('active.json', { version: next })
+        activatePending(next)
         return true
       }
       // 내용이 다른 versions/<next>는 손상된 잔여물이므로 재검증된 다운로드로 다시 스테이징한다.
@@ -98,7 +109,7 @@ export const checkForUpdate = async ({ fetchImpl = fetch, version = currentVersi
       fs.rmSync(staging, { recursive: true, force: true })
       throw error
     }
-    writeState('active.json', { version: next })
+    activatePending(next)
     return true
   } finally { unlock() }
 }
