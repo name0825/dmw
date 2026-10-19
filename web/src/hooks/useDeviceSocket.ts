@@ -1,4 +1,4 @@
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 
 import { normalizeDevices } from '../api'
 import type { Device } from '../types'
@@ -11,13 +11,19 @@ export const useDeviceSocket = (
   logoutUser: () => Promise<void>,
   setDevices: (devices: Device[]) => void,
 ) => {
+  // 토큰 갱신으로 effect 가 재시작돼도 유지되는 연속 갱신 횟수. 연결 성공 시에만 초기화한다.
+  const refreshCountRef = useRef(0)
+
   useEffect(() => {
-    if (!token) return
+    if (!token) {
+      refreshCountRef.current = 0
+      return
+    }
 
     let socket: WebSocket | null = null
     let reconnectTimer: number | null = null
     let cancelled = false
-    let attempt = 0
+    let attempt = refreshCountRef.current
     let quickFailCount = 0
     let connectStartedAt = 0
 
@@ -45,6 +51,7 @@ export const useDeviceSocket = (
       socket.onopen = () => {
         attempt = 0
         quickFailCount = 0
+        refreshCountRef.current = 0
       }
 
       socket.onmessage = (event) => {
@@ -64,6 +71,7 @@ export const useDeviceSocket = (
         quickFailCount = Date.now() - connectStartedAt < QUICK_FAIL_MS ? quickFailCount + 1 : 0
 
         if (quickFailCount >= 2) {
+          refreshCountRef.current += 1
           const result = await refreshSession()
           if (cancelled) return
 
@@ -87,7 +95,9 @@ export const useDeviceSocket = (
       }
     }
 
-    connect()
+    // 갱신 직후 재시작이면 즉시 연결하지 않고 누적 백오프 후 연결한다.
+    if (attempt > 0) scheduleReconnect()
+    else connect()
     return () => {
       cancelled = true
       if (socket) socket.close()
