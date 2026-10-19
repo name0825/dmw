@@ -98,7 +98,7 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 
 | 변수 | 설명 | 기본값 |
 |---|---|---|
-| `NODE_ENV` | 실행 환경(`production`이면 아래 필수값 검증 활성화) | `development` |
+| `NODE_ENV` | 실행 환경. `development`/`test`가 아닌 모든 값(미설정 포함)은 프로덕션으로 취급되어 아래 필수값 검증과 `COOKIE_SECURE=true` 기본값이 적용됨. 개발 기본값이 필요하면 `development`로 명시(`npm run dev`는 자동 지정) | (미설정 = `production`) |
 | `PORT` / `SERVER_PORT` | HTTP API 포트 | `3001` |
 | `WS_PORT` | WebSocket 포트 | `PORT + 1` |
 | `BIND_HOST` | HTTP/WS 바인딩 주소 (Docker host 네트워크에서는 `127.0.0.1`) | `0.0.0.0` |
@@ -108,7 +108,7 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 | `ADMIN_EMAIL` | 관리자 이메일 | `admin@dmw.local` |
 | `ADMIN_PASSWORD` | 관리자 비밀번호. 프로덕션에서는 플레이스홀더 금지, 미설정 시 기동 실패 | `admin123`(개발 전용) |
 | `CORS_ORIGIN` / `FRONTEND_ORIGIN` | 허용할 CORS origin(쉼표 구분). 프로덕션에서는 필수 | (비움) |
-| `COOKIE_SECURE` | 리프레시 쿠키 Secure 플래그 (`true`/`false`) | `NODE_ENV=production`이면 `true` |
+| `COOKIE_SECURE` | 리프레시 쿠키 Secure 플래그 (`true`/`false`, 빈 값은 미설정과 같음). 기본 `docker-compose.yml`은 평문 HTTP용으로 `false`, `docker-compose.https.yml`은 `true` | 프로덕션 취급이면 `true` |
 | `WOL_BROADCAST_ADDRESS` | WOL 브로드캐스트 주소 고정값. 비우면 대상 IP 기준 /24로 추정 | (비움) |
 | `SSH_KEY_PATH` | SSH 원격 명령용 서버 개인키(ed25519) 경로. 없으면 첫 사용 시 0600 으로 생성. 공개키는 UI(기기 카드의 SSH)에 표시되며 대상 기기의 `authorized_keys`에 추가해야 함. sudo 명령은 대상 기기에서 NOPASSWD 필요. 키 파일을 교체·삭제하면 서버를 재시작해야 반영됨 | `DB_PATH` 옆 `ssh/dmw_ed25519` |
 | `DISCORD_WEBHOOK_URL` | Discord 알림 웹훅 URL | (비움) |
@@ -145,6 +145,7 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 - 장치당 동시 1건, 전체 동시 4건, 요청 속도 제한 10회/윈도입니다.
 - root 권한이 필요한 명령은 대상 기기에 NOPASSWD sudo 설정이 필요합니다.
 - 실행 기록(`command_runs`)은 90일 보관하며 장치를 삭제해도 남습니다. 설정 변경과 재인증 실패도 감사 기록됩니다.
+- 신뢰한 호스트 키는 저장 당시 장치 IP에 묶입니다. 장치 IP가 바뀌면 명령 실행이 409로 거부되므로 호스트 키를 다시 스캔·저장해야 합니다. IP 바인딩 도입 전에 저장한 기존 SSH 설정도 IP 정보가 없어 같은 이유로 거부되니, 업그레이드 후 한 번씩 다시 스캔·저장하세요.
 
 ## API 개요
 
