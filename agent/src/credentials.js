@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 
@@ -52,27 +53,44 @@ export const clearCredentials = (expected) => {
   fs.rmSync(path.join(getStateDir(), 'credentials.json'), { force: true })
   return true
 }
+const bootTime = () => Math.round(Date.now() / 1000 - os.uptime())
+const parseLock = (text) => {
+  try {
+    const value = JSON.parse(text)
+    if (Number.isInteger(value)) return { pid: value }
+    if (value && Number.isInteger(value.pid) && typeof value.boot === 'number') return value
+  } catch {}
+  return null
+}
+const isStaleLock = (file) => {
+  const info = parseLock(fs.readFileSync(file, 'utf8').trim())
+  if (!info || info.pid <= 0) return Date.now() - fs.statSync(file).mtimeMs >= 10000
+  if (info.boot !== undefined && Math.abs(info.boot - bootTime()) > 120 && Date.now() - fs.statSync(file).mtimeMs > 45000) return true
+  try { process.kill(info.pid, 0); return false } catch (probe) { return probe.code === 'ESRCH' }
+}
 export const acquireLock = (name) => {
   fs.mkdirSync(getStateDir(), { recursive: true })
   const file = path.join(getStateDir(), `${name}.lock`)
   try {
     const fd = fs.openSync(file, 'wx', 0o600)
-    fs.writeFileSync(fd, String(process.pid))
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, boot: bootTime() }))
     fs.closeSync(fd)
-    return () => fs.unlinkSync(file)
+    const beat = setInterval(() => { try { const now = new Date(); fs.utimesSync(file, now, now) } catch {} }, 10000).unref()
+    return () => { clearInterval(beat); fs.unlinkSync(file) }
   } catch (error) {
     if (error.code !== 'EEXIST') throw error
-    const pid = Number(fs.readFileSync(file, 'utf8'))
-    if (!Number.isInteger(pid) || pid <= 0) throw new Error(`${name} 잠금 파일을 확인하세요: ${file}`)
-    try { process.kill(pid, 0); return null } catch (probe) {
-      if (probe.code !== 'ESRCH') return null
-      const reclaimed = `${file}.${process.pid}.stale`
-      try { fs.renameSync(file, reclaimed) } catch (renameError) {
-        if (renameError.code === 'ENOENT') return null
-        throw renameError
-      }
-      fs.unlinkSync(reclaimed)
-      return acquireLock(name)
+    let stale
+    try { stale = isStaleLock(file) } catch (readError) {
+      if (readError.code === 'ENOENT') return acquireLock(name)
+      throw readError
     }
+    if (!stale) return null
+    const reclaimed = `${file}.${process.pid}.stale`
+    try { fs.renameSync(file, reclaimed) } catch (renameError) {
+      if (renameError.code === 'ENOENT') return null
+      throw renameError
+    }
+    fs.unlinkSync(reclaimed)
+    return acquireLock(name)
   }
 }
