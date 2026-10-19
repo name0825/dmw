@@ -12,6 +12,7 @@ services:
       WS_PORT: 3002
       BIND_HOST: 127.0.0.1
       NODE_ENV: production
+      COOKIE_SECURE: "false"
       DB_PATH: /app/data/dmw.db
       JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in a .env file at the project root before running docker compose}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@dmw.local}

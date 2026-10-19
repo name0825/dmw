@@ -50,15 +50,23 @@ const pruneAlerts = async () => {
 
 const applyAlertCooldown = (alerts: DeviceAlert[]): DeviceAlert[] => {
   const now = Date.now()
+  const seen = new Set<string>()
   return alerts.filter((alert) => {
     const key = `${alert.deviceId}-${alert.metric}`
     const lastTimestamp = lastAlertTimestamps.get(key) || 0
-    if (now - lastTimestamp > ALERT_COOLDOWN_MS) {
-      lastAlertTimestamps.set(key, now)
+    if (!seen.has(key) && now - lastTimestamp > ALERT_COOLDOWN_MS) {
+      seen.add(key)
       return true
     }
     return false
   })
+}
+
+const recordAlertCooldown = (alerts: DeviceAlert[]) => {
+  const now = Date.now()
+  for (const alert of alerts) {
+    lastAlertTimestamps.set(`${alert.deviceId}-${alert.metric}`, now)
+  }
 }
 
 const updateDeviceStatuses = async (tx: any, now: Date = new Date()) => {
@@ -94,6 +102,7 @@ export const updateOfflineStates = async () => {
   ))
   if (offlineAlerts.length) {
     await saveAlertsToDb(offlineAlerts)
+    recordAlertCooldown(offlineAlerts)
     await notifyAlerts(offlineAlerts)
   }
 
@@ -138,6 +147,7 @@ export const monitorAlerts = async () => {
 
   if (filteredAlerts.length) {
     await saveAlertsToDb(filteredAlerts)
+    recordAlertCooldown(filteredAlerts)
     await notifyAlerts(filteredAlerts)
   }
 }

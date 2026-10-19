@@ -122,6 +122,8 @@ const ACCOUNT_FAILURE_TTL_MS = 15 * 60 * 1000
 export const EMAIL_FAILURE_CEILING = 100
 const EMAIL_FAILURE_WINDOW_MS = 60 * 60 * 1000
 export const ACCOUNT_THROTTLE_MAX_ENTRIES = 10_000
+/** A (email, IP) pair that logged in successfully stays trusted this long. */
+const TRUSTED_LOGIN_TTL_MS = 30 * 24 * 60 * 60 * 1000
 
 type ThrottleEntry = { count: number; startedAt: number; lockedUntil: number; expiresAt: number }
 
@@ -129,6 +131,27 @@ type ThrottleEntry = { count: number; startedAt: number; lockedUntil: number; ex
 const streakStates = new Map<string, ThrottleEntry>()
 /** Hourly per-email failure totals across all IPs (distributed-guessing ceiling). */
 const emailCeilingStates = new Map<string, ThrottleEntry>()
+/** `login|email|ip` keys that recently logged in successfully, mapped to their trust expiry; insertion order = oldest first. */
+const trustedLogins = new Map<string, number>()
+
+const isTrusted = (key: string, now: number): boolean => {
+  const expiresAt = trustedLogins.get(key)
+  if (expiresAt === undefined) return false
+  if (expiresAt <= now) {
+    trustedLogins.delete(key)
+    return false
+  }
+  return true
+}
+
+const markTrusted = (key: string, now: number): void => {
+  trustedLogins.delete(key)
+  if (trustedLogins.size >= ACCOUNT_THROTTLE_MAX_ENTRIES) {
+    const oldest = trustedLogins.keys().next().value
+    if (oldest !== undefined) trustedLogins.delete(oldest)
+  }
+  trustedLogins.set(key, now + TRUSTED_LOGIN_TTL_MS)
+}
 
 const normalizeEmail = (email: string): string => email.trim().toLowerCase()
 
@@ -162,14 +185,53 @@ const makeRoom = (states: Map<string, ThrottleEntry>, now: number): boolean => {
   return true
 }
 
+const streakLockMs = (count: number): number =>
+  count >= ACCOUNT_LOCK_THRESHOLD
+    ? Math.min(ACCOUNT_LOCK_BASE_MS * 2 ** (count - ACCOUNT_LOCK_THRESHOLD), ACCOUNT_LOCK_MAX_MS)
+    : 0
+
+/**
+ * Reverts the streak failure an attempt recorded. If the entry is still the one the attempt wrote,
+ * the pre-attempt snapshot is restored (nothing if there was none or it has lapsed), so a lock that
+ * had lapsed is not revived. If another attempt has replaced it, only the count is decremented and
+ * lockedUntil is never extended.
+ */
+const undoStreakFailure = (key: string, written: ThrottleEntry, previous: ThrottleEntry | undefined): void => {
+  const now = Date.now()
+  const state = streakStates.get(key)
+  if (!state || state.expiresAt <= now) return
+  if (state === written) {
+    if (previous && previous.expiresAt > now) streakStates.set(key, previous)
+    else streakStates.delete(key)
+    return
+  }
+  const count = state.count - 1
+  if (count <= 0) {
+    streakStates.delete(key)
+    return
+  }
+  state.count = count
+  state.lockedUntil = Math.min(state.lockedUntil, count >= ACCOUNT_LOCK_THRESHOLD ? state.startedAt + streakLockMs(count) : 0)
+}
+
+const undoEmailFailure = (key: string, windowStartedAt: number): void => {
+  const now = Date.now()
+  const state = emailCeilingStates.get(key)
+  if (!state || state.expiresAt <= now || state.startedAt !== windowStartedAt) return
+  const count = state.count - 1
+  if (count <= 0) {
+    emailCeilingStates.delete(key)
+    return
+  }
+  state.count = count
+  state.lockedUntil = count >= EMAIL_FAILURE_CEILING ? state.expiresAt : 0
+}
+
 const recordStreakFailure = (key: string, now: number): boolean => {
   const previous = streakStates.get(key)
   const live = previous && previous.expiresAt > now ? previous : null
   const count = (live?.count ?? 0) + 1
-  const lockMs =
-    count >= ACCOUNT_LOCK_THRESHOLD
-      ? Math.min(ACCOUNT_LOCK_BASE_MS * 2 ** (count - ACCOUNT_LOCK_THRESHOLD), ACCOUNT_LOCK_MAX_MS)
-      : 0
+  const lockMs = streakLockMs(count)
   if (!streakStates.delete(key) && !makeRoom(streakStates, now)) return false
   streakStates.set(key, { count, startedAt: now, lockedUntil: now + lockMs, expiresAt: now + ACCOUNT_FAILURE_TTL_MS })
   return true
@@ -189,32 +251,43 @@ const recordEmailFailure = (key: string, now: number): boolean => {
 export type PasswordAttempt = {
   /** Milliseconds the caller must wait; when > 0 the attempt was refused and nothing was recorded. */
   lockedMs: number
-  /** Call after the password verified: forgets the failure counted up front. */
+  /** Call after the password verified: forgets the streak, undoes this attempt's email-ceiling count, and trusts the (email, IP) pair. */
   succeed: () => void
+  /** Call when the check itself errored (not a wrong password): undoes only this attempt's up-front count and trusts nothing. */
+  cancel: () => void
 }
 
-const refused = (lockedMs: number): PasswordAttempt => ({ lockedMs, succeed: () => {} })
+const refused = (lockedMs: number): PasswordAttempt => ({ lockedMs, succeed: () => {}, cancel: () => {} })
 
 /**
  * Checks the lock and, if open, counts the attempt as a failure immediately — before the slow
  * password hash comparison — so concurrent requests cannot all slip past a lock that has just
- * lapsed. The caller invokes succeed() on a correct password to undo the count.
+ * lapsed. The caller invokes succeed() on a correct password, or cancel() if the check threw.
+ * A trusted (email, IP) pair skips the per-email ceiling lock but is still subject to its own streak lock.
  * Refuses (fail closed) when the key cannot be tracked because the table holds only locked entries.
  */
 const beginAttempt = (key: string, emailKey: string | null, now: number): PasswordAttempt => {
-  const lockedMs = Math.max(
-    lockRemaining(streakStates, key, now),
-    emailKey ? lockRemaining(emailCeilingStates, emailKey, now) : 0,
-  )
+  const ceilingLocked = emailKey && !isTrusted(key, now) ? lockRemaining(emailCeilingStates, emailKey, now) : 0
+  const lockedMs = Math.max(lockRemaining(streakStates, key, now), ceilingLocked)
   if (lockedMs > 0) return refused(lockedMs)
+  const previousStreak = streakStates.get(key)
   if (!recordStreakFailure(key, now) || (emailKey && !recordEmailFailure(emailKey, now))) {
     return refused(ACCOUNT_LOCK_BASE_MS)
   }
+  const writtenStreak = streakStates.get(key)!
+  const windowStartedAt = emailKey ? emailCeilingStates.get(emailKey)!.startedAt : 0
   return {
     lockedMs: 0,
     succeed: () => {
       streakStates.delete(key)
-      if (emailKey) emailCeilingStates.delete(emailKey)
+      if (emailKey) {
+        undoEmailFailure(emailKey, windowStartedAt)
+        markTrusted(key, now)
+      }
+    },
+    cancel: () => {
+      undoStreakFailure(key, writtenStreak, previousStreak)
+      if (emailKey) undoEmailFailure(emailKey, windowStartedAt)
     },
   }
 }
@@ -238,6 +311,7 @@ export const beginSshConfirmAttempt = (userId: number, now = Date.now()): Passwo
 export const resetPasswordThrottles = (): void => {
   streakStates.clear()
   emailCeilingStates.clear()
+  trustedLogins.clear()
 }
 
 /**

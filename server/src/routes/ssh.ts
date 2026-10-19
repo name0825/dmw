@@ -61,8 +61,16 @@ const confirmPassword = async (
     reply.code(429).send({ message: 'Too many failed attempts. Try again later.' })
     return null
   }
-  const user = await getDb().get('SELECT id, password_hash FROM users WHERE id = ?', [request.user.id])
-  if (user && (await bcrypt.compare(password, user.password_hash))) {
+  let user: any
+  let verified = false
+  try {
+    user = await getDb().get('SELECT id, password_hash FROM users WHERE id = ?', [request.user.id])
+    verified = Boolean(user) && (await bcrypt.compare(password, user.password_hash))
+  } catch (error) {
+    attempt.cancel()
+    throw error
+  }
+  if (verified) {
     attempt.succeed()
     return user
   }
