@@ -5,7 +5,7 @@
 - **프로젝트명**: DMW (Device Manager Web)
 - **한 줄 요약**: 홈 네트워크 상의 디바이스들을 웹 UI에서 한 번에 관리하고, WOL과 실시간 리소스 모니터링을 제공하는 개인용 디바이스 관리 웹 서비스
 - **시작일 / 목표 완료일**: '26. 08. 14. / '26. 09. 04.
-- **버전**: v0.6
+- **버전**: v0.7
 - **구현 갭 / 실행 방법**: 남은 구현 갭은 `IMPLEMENTATION_GAPS.md`, 실행/배포 방법은 `README.md` 참고
 
 ---
@@ -232,7 +232,7 @@ agentVersion
 }
 ```
 
-> **실제 구현 상태(구현 미비)**: Agent가 `POST /agent/heartbeat`로 실제 전송하는 값은 `cpuUsage` / `memoryUsage` / `diskUsage`뿐이다. `deviceId`는 요청 바디가 아닌 API Key로 서버가 식별하고, `timestamp`는 Agent가 보내는 값이 아니라 서버가 수신한 시각을 기록한다. `agentVersion`은 전송/저장되지 않는다.
+> **실제 구현 상태**: Agent가 `POST /agent/heartbeat`로 실제 전송하는 값은 `cpuUsage` / `memoryUsage` / `diskUsage`뿐이다. `deviceId`는 요청 바디가 아닌 API Key로 서버가 식별하고, `timestamp`는 Agent가 보내는 값이 아니라 서버가 수신한 시각을 기록한다. `agentVersion`은 선택 값으로 heartbeat에 실려 오면 검증 후 `devices.agent_version`에 저장하고 UI 장치 카드에 표시한다.
 
 ### 서버에서 관리하는 상태
 
@@ -499,6 +499,22 @@ POST /agent/heartbeat
 - CPU / MEM / Disk 최신값을 `device_metrics_latest`에 저장
 - WebSocket 이벤트 발생
 
+### SSH 원격 명령
+
+```text
+GET    /ssh/public-key
+POST   /devices/:id/ssh/scan
+PUT    /devices/:id/ssh
+DELETE /devices/:id/ssh
+POST   /devices/:id/commands
+GET    /devices/:id/commands
+```
+
+- 서버가 `ssh2`로 대상 기기에 직접 접속하며, 서버 전용 ed25519 키만 사용한다(비밀번호 인증 없음, `SSH_KEY_PATH`)
+- 호스트 키는 스캔 후 사용자가 지문을 확인해 저장하는 TOFU 방식이다
+- 자유 명령 실행과 SSH 설정 저장/해제는 매번 관리자 비밀번호 재입력이 필요하다(실패 시 403)
+- 실행 기록은 `command_runs`, 설정 변경·재인증 실패는 `ssh_audit`에 감사 기록으로 남긴다
+
 ### 기타
 
 ```text
@@ -520,6 +536,10 @@ mac_address
 ip_address
 agent_key_hash
 agent_paired
+agent_version
+ssh_username
+ssh_port
+ssh_host_key
 paired_at
 last_seen
 status
@@ -682,7 +702,7 @@ created_at
 - [x] 페어링 코드는 1회 사용 후 재사용할 수 없다.
 - [x] 디바이스를 수정할 수 있다.
 - [x] 디바이스를 삭제할 수 있다.
-- [x] 서버 재시작 후 디바이스 정보가 유지된다.
+- [x] 서버 재시작 후 디바이스 정보가 유지된다. (`integration-restart.test.ts`)
 
 ### WOL
 
@@ -704,7 +724,7 @@ created_at
 
 - [x] Agent가 보낸 최신 상태가 서버에 반영된다.
 - [x] WebSocket으로 브라우저에 최신 상태가 전달된다.
-- [ ] 브라우저 새로고침 없이 상태가 변경된다.
+- [ ] 브라우저 새로고침 없이 상태가 변경된다. (서버 측 WS push는 `integration-realtime.test.ts`로 자동화, 브라우저 E2E는 없음)
 
 ### 배포
 
@@ -751,6 +771,12 @@ created_at
 ---
 
 ## 15. 변경 이력
+
+### v0.7 ('26. 09. 29.)
+
+- 실제 코드 기준 재동기화: SSH 원격 명령(P2) 구현 반영(§8 API, §9 `devices` 컬럼), `agentVersion` 전송·저장 반영(§6)
+- 서버 재시작 유지(`integration-restart`)와 WS push(`integration-realtime`) 자동화를 §12에 표기, CI `docker` 잡 추가(첫 실행 대기)
+- 남은 항목: Docker CI 첫 통과, SSH 실기기 검증, 브라우저 E2E, 홈서버 상시 배포(M4), P2 잔여(다중 사용자/권한, React Native 앱, Docker Hub 배포)
 
 ### v0.6 ('26. 09. 28.)
 

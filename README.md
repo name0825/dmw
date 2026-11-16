@@ -164,6 +164,10 @@ docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 | GET | `/devices/:id/history` | 장치의 리소스 지표 이력 |
 | POST | `/devices/:id/wake` | 해당 장치로 WOL 매직 패킷 전송 |
 | GET | `/alerts` | 발생한 알림 목록 |
+| GET | `/ssh/public-key` | SSH용 서버 공개키 조회 |
+| POST | `/devices/:id/ssh/scan` | 대상 기기 SSH 호스트 키 스캔 |
+| PUT / DELETE | `/devices/:id/ssh` | SSH 설정 저장/해제(비밀번호 재입력) |
+| POST / GET | `/devices/:id/commands` | 원격 명령 실행(비밀번호 재입력) / 실행 이력 조회 |
 | POST | `/pairing-codes` | 페어링 코드 발급 |
 | POST | `/agent/pair` | 에이전트 페어링(코드 → API 키) |
 | POST | `/agent/heartbeat` | 에이전트 상태 보고 |
@@ -179,8 +183,8 @@ DMW/
 │   └── src/
 │       ├── index.ts            # 서버 부트스트랩
 │       ├── routes.ts           # 라우트 등록, /health
-│       ├── routes/             # auth, devices, pairing, agent 라우트
-│       ├── services/           # devices, agent, wake(WOL), monitoring, pairing, notifications, ws
+│       ├── routes/             # auth, devices, pairing, agent, ssh 라우트
+│       ├── services/           # devices, agent, wake(WOL), monitoring, pairing, notifications, ws, ssh, sshKey
 │       ├── database/           # SQLite 연결, 스키마, 인증 관련 쿼리
 │       ├── middleware/auth.ts  # JWT 인증 미들웨어
 │       ├── utils/              # crypto, validation 유틸
@@ -201,9 +205,11 @@ DMW/
 │       ├── config.js, credentials.js
 │       ├── metrics/             # windows.js, unix.js, index.js
 │       ├── network.js, retry.js, autostart.js, update.js
-│       └── test/*.test.js       # 수명주기 테스트
+│   └── test/*.test.js           # 수명주기 테스트
 ├── dmw.conf                     # 포트 기본값 (SERVER_PORT/WS_PORT/WEB_DEV_PORT 등)
 ├── docker-compose.yml           # server + web 컨테이너 정의
+├── docker-compose.dev.yml       # 개발용 오버레이(핫 리로드)
+├── docker-compose.prod.yml      # 운영용 오버레이(자리표시자)
 ├── docker-compose.https.yml     # HTTPS 서빙용 오버레이
 ├── start.sh / start.ps1 / start.cmd  # 로컬 개발용 런처 스크립트
 ├── project.md                   # 프로젝트 기획서
@@ -216,7 +222,7 @@ DMW/
 npm test
 ```
 
-`server`를 빌드한 뒤 `node --test`로 `server/dist/**/*.test.js`(단위/통합 테스트)와 `agent/test/*.test.js`(에이전트 수명주기 테스트)를 실행합니다. CI 설정은 `.github/workflows/ci.yml`을 참고하세요.
+`server`를 빌드한 뒤 `node --test`로 `server/dist/**/*.test.js`(단위/통합 테스트)와 `agent/test/*.test.js`(에이전트 수명주기 테스트)를 실행합니다. CI(`.github/workflows/ci.yml`)에는 위 테스트를 실행하는 `ci` 잡과, compose 빌드·기동 후 서버 컨테이너를 재시작해 데이터 유지를 확인하는 `docker` 잡이 있습니다.
 
 ## 미구현·한계
 
