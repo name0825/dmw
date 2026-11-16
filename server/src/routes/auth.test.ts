@@ -408,3 +408,90 @@ test('throttle eviction never drops a locked entry and fails closed only for the
     resetPasswordThrottles()
   }
 })
+
+test('a trusted (email, IP) pair bypasses the per-email ceiling but not its own streak lock', async () => {
+  const { ACCOUNT_LOCK_THRESHOLD, EMAIL_FAILURE_CEILING, beginLoginAttempt, resetPasswordThrottles } = await import('../auth.js')
+  resetPasswordThrottles()
+  try {
+    const now = Date.now()
+    beginLoginAttempt('trust@dmw.local', '10.0.0.1', now).succeed()
+    for (let i = 0; i < EMAIL_FAILURE_CEILING; i += 1) {
+      beginLoginAttempt('trust@dmw.local', `10.2.${Math.floor(i / 250)}.${i % 250}`, now)
+    }
+    assert.ok(beginLoginAttempt('trust@dmw.local', '10.9.9.9', now).lockedMs > 0, 'untrusted IP is blocked by the ceiling')
+    const trusted = beginLoginAttempt('trust@dmw.local', '10.0.0.1', now)
+    assert.equal(trusted.lockedMs, 0, 'trusted pair skips the ceiling lock')
+
+    for (let i = 1; i < ACCOUNT_LOCK_THRESHOLD; i += 1) beginLoginAttempt('trust@dmw.local', '10.0.0.1', now)
+    assert.ok(beginLoginAttempt('trust@dmw.local', '10.0.0.1', now).lockedMs > 0, 'trusted pair is still streak-locked')
+
+    const later = now + 31 * 24 * 60 * 60 * 1000
+    assert.equal(beginLoginAttempt('trust@dmw.local', '10.0.0.1', later).lockedMs, 0)
+  } finally {
+    resetPasswordThrottles()
+  }
+})
+
+test('succeed only decrements the per-email ceiling by one instead of clearing it', async () => {
+  const { EMAIL_FAILURE_CEILING, beginLoginAttempt, resetPasswordThrottles } = await import('../auth.js')
+  resetPasswordThrottles()
+  try {
+    const now = Date.now()
+    for (let i = 0; i < EMAIL_FAILURE_CEILING - 1; i += 1) {
+      beginLoginAttempt('ceil@dmw.local', `10.3.${Math.floor(i / 250)}.${i % 250}`, now)
+    }
+    beginLoginAttempt('ceil@dmw.local', '10.0.0.1', now).succeed()
+    assert.equal(beginLoginAttempt('ceil@dmw.local', '10.4.0.1', now).lockedMs, 0, 'count is CEILING - 1 after succeed, this is the CEILING-th')
+    assert.ok(beginLoginAttempt('ceil@dmw.local', '10.4.0.2', now).lockedMs > 0, 'prior failures were not forgiven')
+  } finally {
+    resetPasswordThrottles()
+  }
+})
+
+test('cancel undoes only the up-front count and does not trust the pair', async () => {
+  const { ACCOUNT_LOCK_THRESHOLD, EMAIL_FAILURE_CEILING, beginLoginAttempt, beginSshConfirmAttempt, resetPasswordThrottles } =
+    await import('../auth.js')
+  resetPasswordThrottles()
+  try {
+    const now = Date.now()
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i += 1) beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).cancel()
+    assert.equal(beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).lockedMs, 0, 'cancelled attempts leave no streak')
+
+    resetPasswordThrottles()
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD - 1; i += 1) beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now)
+    beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).cancel()
+    assert.equal(beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).lockedMs, 0, 'earlier failures are kept: this is failure 5')
+    assert.ok(beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).lockedMs > 0)
+
+    resetPasswordThrottles()
+    for (let i = 0; i < EMAIL_FAILURE_CEILING; i += 1) {
+      beginLoginAttempt('cancel@dmw.local', `10.5.${Math.floor(i / 250)}.${i % 250}`, now)
+    }
+    beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).cancel()
+    assert.ok(beginLoginAttempt('cancel@dmw.local', '10.0.0.1', now).lockedMs > 0, 'cancel does not trust the pair')
+
+    resetPasswordThrottles()
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i += 1) beginSshConfirmAttempt(7, now).cancel()
+    assert.equal(beginSshConfirmAttempt(7, now).lockedMs, 0)
+  } finally {
+    resetPasswordThrottles()
+  }
+})
+
+test('cancel after a lapsed lock restores the earlier entry instead of re-locking the user', async () => {
+  const { ACCOUNT_LOCK_THRESHOLD, beginLoginAttempt, resetPasswordThrottles } = await import('../auth.js')
+  resetPasswordThrottles()
+  try {
+    const now = Date.now()
+    const earlier = now - 60 * 1000
+    for (let i = 0; i < ACCOUNT_LOCK_THRESHOLD; i += 1) beginLoginAttempt('lapsed@dmw.local', '10.0.0.1', earlier)
+    assert.ok(beginLoginAttempt('lapsed@dmw.local', '10.0.0.1', earlier).lockedMs > 0, 'locked at the time')
+
+    const attempt = beginLoginAttempt('lapsed@dmw.local', '10.0.0.1', now)
+    assert.equal(attempt.lockedMs, 0, 'lock has lapsed')
+    attempt.cancel()
+    assert.equal(beginLoginAttempt('lapsed@dmw.local', '10.0.0.1', now).lockedMs, 0, 'cancel must not lock the user')
+  } finally {
+    resetPasswordThrottles()
+  }
+})

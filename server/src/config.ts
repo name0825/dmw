@@ -103,10 +103,11 @@ export const CORS_ORIGIN = normalizeList(process.env.CORS_ORIGIN || process.env.
  * Secure flag for refresh-token cookie.
  * Defaults to true in production to prevent token transmission over plain HTTP.
  * Override with COOKIE_SECURE=false only for local HTTP development.
+ * An empty or whitespace-only value counts as unset.
  */
-const cookieSecureRaw = process.env.COOKIE_SECURE
+const cookieSecureRaw = process.env.COOKIE_SECURE?.trim()
 export const COOKIE_SECURE =
-  cookieSecureRaw !== undefined
+  cookieSecureRaw
     ? cookieSecureRaw === 'true'
     : isProductionLike()
 

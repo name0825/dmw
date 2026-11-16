@@ -9,7 +9,7 @@ import { RATE_LIMIT_TIME_WINDOW } from './config/constants.js'
 import { initPool, closePool } from './database/index.js'
 import { authMiddleware } from './middleware/auth.js'
 import { isPublicRoute } from './auth.js'
-import { registerRoutes, stopScheduler } from './routes.js'
+import { registerRoutes, stopScheduler, drainScheduler } from './routes.js'
 import { setupWebSocket, closeWebSocket } from './services/ws.js'
 
 // Only trust X-Forwarded-For when the immediate peer is loopback (i.e. nginx
@@ -81,6 +81,7 @@ const shutdown = async (_signal: string) => {
     stopScheduler()
     await app.close()
     await closeWebSocket()
+    await drainScheduler()
     await closePool()
   } catch (err) {
     shutdownError = err

@@ -76,15 +76,16 @@ export const handleLogin = async (request: any, reply: any) => {
     return
   }
 
-  const user = await getDb().get('SELECT * FROM users WHERE email = ?', [email])
-  if (!user) {
-    await bcrypt.compare(password, DUMMY_PASSWORD_HASH)
-    reply.code(401).send({ message: 'Invalid credentials' })
-    return
+  let user: any
+  let isValidPassword = false
+  try {
+    user = await getDb().get('SELECT * FROM users WHERE email = ?', [email])
+    isValidPassword = await bcrypt.compare(password, user ? user.password_hash : DUMMY_PASSWORD_HASH)
+  } catch (error) {
+    attempt.cancel()
+    throw error
   }
-
-  const isValidPassword = await bcrypt.compare(password, user.password_hash)
-  if (!isValidPassword) {
+  if (!user || !isValidPassword) {
     reply.code(401).send({ message: 'Invalid credentials' })
     return
   }

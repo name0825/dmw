@@ -210,3 +210,28 @@ test('production requires ADMIN_PASSWORD of at least 12 characters', () => {
     }
   }
 })
+
+test('empty or whitespace COOKIE_SECURE is treated as unset and falls back to the NODE_ENV default', async () => {
+  const previousNodeEnv = process.env.NODE_ENV
+  const previousCookieSecure = process.env.COOKIE_SECURE
+  const load = async (tag: string) => (await import(`./config.js?${tag}`)) as { COOKIE_SECURE: boolean }
+
+  try {
+    process.env.NODE_ENV = 'production'
+    process.env.COOKIE_SECURE = ''
+    assert.equal((await load('empty')).COOKIE_SECURE, true)
+    process.env.COOKIE_SECURE = '  '
+    assert.equal((await load('blank')).COOKIE_SECURE, true)
+    process.env.COOKIE_SECURE = 'false'
+    assert.equal((await load('false')).COOKIE_SECURE, false)
+    process.env.NODE_ENV = 'test'
+    process.env.COOKIE_SECURE = ''
+    assert.equal((await load('test-empty')).COOKIE_SECURE, false)
+  } finally {
+    if (previousNodeEnv === undefined) delete process.env.NODE_ENV
+    else process.env.NODE_ENV = previousNodeEnv
+
+    if (previousCookieSecure === undefined) delete process.env.COOKIE_SECURE
+    else process.env.COOKIE_SECURE = previousCookieSecure
+  }
+})

@@ -81,6 +81,31 @@ test('windows state dir ACL is restricted once, at creation, via icacls args arr
   }
 })
 
+test('windows ACL is applied to an existing dir without marker, and retried after failure', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-aclmarker-'))
+  const previous = { user: process.env.USERNAME, domain: process.env.USERDOMAIN }
+  process.env.USERNAME = 'tester'
+  delete process.env.USERDOMAIN
+  const warn = console.warn
+  try {
+    const dir = path.join(root, 'state')
+    fs.mkdirSync(dir)
+    let calls = 0
+    console.warn = () => {}
+    ensureStateDir(dir, { platform: 'win32', run: () => { calls++; throw new Error('boom') } })
+    console.warn = warn
+    ensureStateDir(dir, { platform: 'win32', run: () => { calls++ } })
+    ensureStateDir(dir, { platform: 'win32', run: () => { calls++ } })
+    assert.equal(calls, 2)
+    assert.ok(fs.existsSync(path.join(dir, '.acl-v1')))
+  } finally {
+    console.warn = warn
+    if (previous.user === undefined) delete process.env.USERNAME; else process.env.USERNAME = previous.user
+    if (previous.domain === undefined) delete process.env.USERDOMAIN; else process.env.USERDOMAIN = previous.domain
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test('windows ACL failure only warns', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-aclfail-'))
   try {
