@@ -20,7 +20,7 @@ export const notifyAlerts = async (alerts: DeviceAlert[]): Promise<void> => {
   if (!webhookUrl && !(telegramBotToken && telegramChatId)) return
 
   const message = alerts
-    .map((alert) => `${alert.metric === 'offline' ? 'OFFLINE' : `${alert.metric.toUpperCase()} ${alert.value}%`} · ${alert.message}`)
+    .map((alert) => `[${alert.deviceName ?? `#${alert.deviceId}`}] ${alert.metric === 'offline' ? 'OFFLINE' : `${alert.metric.toUpperCase()} ${alert.value}%`} · ${alert.message}`)
     .join('\n')
 
   const deliveries: Promise<void>[] = []

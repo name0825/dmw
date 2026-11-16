@@ -32,6 +32,7 @@ export type DeviceHistoryEntry = {
 
 export type AlertItem = {
   deviceId: number
+  deviceName?: string | null
   level: 'info' | 'warning' | 'critical' | string
   message: string
   metric: string

@@ -85,9 +85,10 @@ export const handleGetAlerts = async (_request: any, reply: any) => {
   const db = getDb()
   try {
     const alerts = await db.all(
-      `SELECT id, device_id AS deviceId, level, metric, value, message, created_at
-       FROM alerts
-       ORDER BY created_at DESC LIMIT 50`
+      `SELECT a.id, a.device_id AS deviceId, d.name AS deviceName, a.level, a.metric, a.value, a.message, a.created_at
+       FROM alerts a
+       LEFT JOIN devices d ON d.id = a.device_id
+       ORDER BY a.created_at DESC LIMIT 50`
     )
     reply.send({ alerts })
   } catch (error) {

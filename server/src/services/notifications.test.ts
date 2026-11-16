@@ -23,6 +23,7 @@ test('sends Telegram alerts with the configured bot credentials', async () => {
 
     await notifyAlerts([{
       deviceId: 42,
+      deviceName: 'NAS',
       level: 'critical',
       metric: 'offline',
       value: 0,
@@ -34,7 +35,7 @@ test('sends Telegram alerts with the configured bot credentials', async () => {
     assert.equal(calls[0].input, 'https://api.telegram.org/bot123456:token/sendMessage')
     assert.deepEqual(JSON.parse(String(calls[0].init?.body)), {
       chat_id: '-100123',
-      text: 'DMW Alert\nOFFLINE · 디바이스가 오프라인 상태가 되었습니다.',
+      text: 'DMW Alert\n[NAS] OFFLINE · 디바이스가 오프라인 상태가 되었습니다.',
     })
   } finally {
     globalThis.fetch = previousFetch

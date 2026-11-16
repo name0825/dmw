@@ -10,6 +10,7 @@ type AlertLevel = 'info' | 'warning' | 'critical'
 
 export type DeviceAlert = {
   deviceId: number
+  deviceName?: string | null
   level: AlertLevel
   message: string
   metric: string
@@ -32,6 +33,7 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
   if (device.cpu_usage !== null && device.cpu_usage !== undefined && device.cpu_usage > cpuThreshold) {
     alerts.push({
       deviceId: Number(device.id),
+      deviceName: device.name ?? null,
       level: 'critical',
       message: `CPU 사용량이 ${cpuThreshold}%를 초과했습니다.`,
       metric: 'cpu',
@@ -43,6 +45,7 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
   if (device.memory_usage !== null && device.memory_usage !== undefined && device.memory_usage > memoryThreshold) {
     alerts.push({
       deviceId: Number(device.id),
+      deviceName: device.name ?? null,
       level: 'warning',
       message: `메모리 사용량이 ${memoryThreshold}%를 초과했습니다.`,
       metric: 'memory',
@@ -54,6 +57,7 @@ export function evaluateAlerts(device: any): DeviceAlert[] {
   if (device.disk_usage !== null && device.disk_usage !== undefined && device.disk_usage > diskThreshold) {
     alerts.push({
       deviceId: Number(device.id),
+      deviceName: device.name ?? null,
       level: 'warning',
       message: `디스크 사용량이 ${diskThreshold}%를 초과했습니다.`,
       metric: 'disk',
@@ -70,6 +74,7 @@ export function evaluateOfflineAlert(device: any, previousStatus: string): Devic
 
   return [{
     deviceId: Number(device.id),
+    deviceName: device.name ?? null,
     level: 'critical',
     message: '디바이스가 오프라인 상태가 되었습니다.',
     metric: 'offline',

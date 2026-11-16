@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
 
 import { getApiBaseUrl, getWebSocketBaseUrl } from './api'
 import SshPanel from './SshPanel'
@@ -6,6 +6,68 @@ import { useAuth } from './hooks/useAuth'
 import { useDeviceSocket } from './hooks/useDeviceSocket'
 import { useDevices } from './hooks/useDevices'
 import type { Device, DeviceHistoryEntry, PairingInfo } from './types'
+
+type DeviceSortKey = 'name' | 'status' | 'ip' | 'cpu' | 'last_seen'
+
+const DEVICE_SORT_STORAGE_KEY = 'dmw.deviceSort'
+
+const DEVICE_SORT_OPTIONS: { value: DeviceSortKey; label: string }[] = [
+  { value: 'name', label: '이름' },
+  { value: 'status', label: '상태' },
+  { value: 'ip', label: 'IP' },
+  { value: 'cpu', label: 'CPU 사용량' },
+  { value: 'last_seen', label: '최근 접속' },
+]
+
+const loadDeviceSort = (): DeviceSortKey => {
+  try {
+    const stored = localStorage.getItem(DEVICE_SORT_STORAGE_KEY)
+    return DEVICE_SORT_OPTIONS.some((option) => option.value === stored) ? (stored as DeviceSortKey) : 'name'
+  } catch {
+    return 'name'
+  }
+}
+
+const parseIp = (ip: string | undefined): number[] | null => {
+  const parts = (ip ?? '').trim().split('.').map(Number)
+  return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0) ? parts : null
+}
+
+const compareName = (a: Device, b: Device) => a.name.localeCompare(b.name, 'ko') || a.id - b.id
+
+const compareDevices = (sortKey: DeviceSortKey) => (a: Device, b: Device): number => {
+  switch (sortKey) {
+    case 'status': {
+      const diff = Number(b.status === 'ONLINE') - Number(a.status === 'ONLINE')
+      return diff || compareName(a, b)
+    }
+    case 'ip': {
+      const ipA = parseIp(a.ip_address)
+      const ipB = parseIp(b.ip_address)
+      if (!ipA || !ipB) return Number(!ipA) - Number(!ipB) || compareName(a, b)
+      for (let i = 0; i < 4; i += 1) {
+        if (ipA[i] !== ipB[i]) return ipA[i] - ipB[i]
+      }
+      return compareName(a, b)
+    }
+    case 'cpu': {
+      const cpuA = a.cpu_usage
+      const cpuB = b.cpu_usage
+      if (cpuA === undefined || cpuA === null || cpuB === undefined || cpuB === null) {
+        return Number(cpuA === undefined || cpuA === null) - Number(cpuB === undefined || cpuB === null) || compareName(a, b)
+      }
+      return cpuB - cpuA || compareName(a, b)
+    }
+    case 'last_seen': {
+      const timeA = a.last_seen ? new Date(a.last_seen).getTime() : NaN
+      const timeB = b.last_seen ? new Date(b.last_seen).getTime() : NaN
+      if (Number.isNaN(timeA) || Number.isNaN(timeB)) return Number(Number.isNaN(timeA)) - Number(Number.isNaN(timeB)) || compareName(a, b)
+      return timeB - timeA || compareName(a, b)
+    }
+    default:
+      return compareName(a, b)
+  }
+}
 
 /**
  * Main dashboard view for the DMW frontend.
@@ -51,6 +113,18 @@ export default function App() {
   } = useDevices(apiBase, token, authedRequest, setMessage)
 
   resetDevicesRef.current = resetDevices
+
+  const [deviceSort, setDeviceSort] = useState<DeviceSortKey>(loadDeviceSort)
+  const sortedDevices = useMemo(() => [...devices].sort(compareDevices(deviceSort)), [devices, deviceSort])
+
+  const changeDeviceSort = (value: DeviceSortKey) => {
+    setDeviceSort(value)
+    try {
+      localStorage.setItem(DEVICE_SORT_STORAGE_KEY, value)
+    } catch {
+      return
+    }
+  }
 
   useDeviceSocket(token, wsBase, refreshSession, logoutUser, setDevices)
 
@@ -210,8 +284,11 @@ export default function App() {
               <div className="alert-list">
                 {alerts.map((alert, idx) => (
                   <div key={`${alert.deviceId}-${idx}`} className={`alert-item ${alert.level}`}>
-                    <strong>{alert.message}</strong>
-                    <span>{alert.metric.toUpperCase()} {alert.value}%</span>
+                    <div>
+                      <strong>{alert.deviceName ?? devices.find((d) => d.id === alert.deviceId)?.name ?? `#${alert.deviceId}`}</strong>
+                      <p>{alert.message}</p>
+                    </div>
+                    <span>{alert.metric === 'offline' ? 'OFFLINE' : `${alert.metric.toUpperCase()} ${alert.value}%`}</span>
                   </div>
                 ))}
               </div>
@@ -267,13 +344,20 @@ export default function App() {
           </section>
 
           <section className="card status-panel">
-            <h2>디바이스 상태</h2>
+            <div className="panel-header">
+              <h2>디바이스 상태</h2>
+              <select value={deviceSort} onChange={(e) => changeDeviceSort(e.target.value as DeviceSortKey)} aria-label="디바이스 정렬">
+                {DEVICE_SORT_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </div>
             {message && <p className="message">{message}</p>}
             <div className="device-list">
               {devices.length === 0 ? (
                 <p>등록된 디바이스가 없습니다.</p>
               ) : (
-                devices.map((device) => (
+                sortedDevices.map((device) => (
                   <div className="device-item" key={device.id}>
                     <div>
                       <h3>{device.name}</h3>

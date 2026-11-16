@@ -5,17 +5,19 @@ import { evaluateOfflineAlert } from './alerts.js'
 import { STATUS_OFFLINE, STATUS_ONLINE } from './config/constants.js'
 
 test('creates one alert when a device becomes offline', () => {
-  const alerts = evaluateOfflineAlert({ id: 42, status: STATUS_OFFLINE }, STATUS_ONLINE)
+  const alerts = evaluateOfflineAlert({ id: 42, name: 'NAS', status: STATUS_OFFLINE }, STATUS_ONLINE)
 
   assert.equal(alerts.length, 1)
   assert.deepEqual({
     deviceId: alerts[0].deviceId,
+    deviceName: alerts[0].deviceName,
     level: alerts[0].level,
     metric: alerts[0].metric,
     value: alerts[0].value,
     message: alerts[0].message,
   }, {
     deviceId: 42,
+    deviceName: 'NAS',
     level: 'critical',
     metric: 'offline',
     value: 0,
