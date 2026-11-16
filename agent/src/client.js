@@ -32,5 +32,6 @@ export const unpairFromServer = (serverUrl, apiKey) =>
   requestJson(`${serverUrl}/agent/unpair`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
+    body: '{}',
     signal: AbortSignal.timeout(15000),
   })
