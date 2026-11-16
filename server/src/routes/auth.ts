@@ -154,6 +154,7 @@ export const handleRefresh = async (request: any, reply: any) => {
 
     const revokedMatch = await findRevokedRefreshTokenMatch(refreshToken, tx)
     if (!revokedMatch) return { status: 'invalid' as const }
+    if (new Date(revokedMatch.expires_at).getTime() < Date.now()) return { status: 'expired' as const }
 
     // 폐기된 토큰의 재제시라고 곧바로 탈취로 보면, 같은 쿠키를 든 정상 요청 2 건
     // (탭 2 개의 동시 refresh, 클라이언트 재시도) 이 전체 세션 무효화를 유발한다.
@@ -191,6 +192,7 @@ export const handleRefresh = async (request: any, reply: any) => {
   }
 
   if (outcome.status === 'expired') {
+    reply.clearCookie('refreshToken')
     reply.code(401).send({ message: 'Refresh token expired' })
     return
   }
@@ -216,7 +218,9 @@ export const handleLogout = async (_request: any, reply: any) => {
   if (refreshToken) {
     const outcome = await withTransaction(async (tx) => {
       const matched = await findRefreshTokenMatch(refreshToken, tx)
-      const revokedMatch = matched ? null : await findRevokedRefreshTokenMatch(refreshToken, tx)
+      const revokedCandidate = matched ? null : await findRevokedRefreshTokenMatch(refreshToken, tx)
+      const revokedMatch =
+        revokedCandidate && new Date(revokedCandidate.expires_at).getTime() >= Date.now() ? revokedCandidate : null
 
       if (revokedMatch) {
         const revokedAt = revokedMatch.revoked_at ? new Date(revokedMatch.revoked_at).getTime() : 0

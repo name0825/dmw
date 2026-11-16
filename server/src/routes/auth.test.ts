@@ -227,6 +227,47 @@ test('refresh token whose user row was deleted is rejected without issuing new t
   assert.equal(row.revoked, 1)
 })
 
+test('expired refresh token never triggers reuse detection, even when retried after the grace window', async () => {
+  const { refreshToken } = await login()
+  const db = getDb()
+  const user = await db.get('SELECT id, token_version FROM users WHERE email = ?', [ADMIN_EMAIL])
+  const other = await issueRefreshToken(user.id, db)
+
+  await db.run('UPDATE refresh_tokens SET expires_at = ? WHERE user_id = ? AND id != ?', [
+    new Date(Date.now() - 60_000).toISOString(),
+    user.id,
+    other.id,
+  ])
+
+  const first = reply()
+  await handleRefresh(requestWithCookie(refreshToken), first)
+  assert.equal(first.status, 401)
+  assert.deepEqual(first.body, { message: 'Refresh token expired' })
+  assert.ok(first.cleared.includes('refreshToken'))
+
+  await db.run('UPDATE refresh_tokens SET revoked_at = ? WHERE user_id = ? AND id != ?', [
+    new Date(Date.now() - 60_000).toISOString(),
+    user.id,
+    other.id,
+  ])
+
+  const second = reply()
+  await handleRefresh(requestWithCookie(refreshToken), second)
+  assert.equal(second.status, 401)
+  assert.ok(second.cleared.includes('refreshToken'))
+
+  const userAfter = await db.get('SELECT token_version FROM users WHERE id = ?', [user.id])
+  assert.equal(userAfter.token_version, user.token_version)
+
+  const otherRow = await db.get('SELECT revoked FROM refresh_tokens WHERE id = ?', [other.id])
+  assert.equal(otherRow.revoked, 0)
+
+  const rotate = reply()
+  const result = await handleRefresh(requestWithCookie(other.token), rotate)
+  assert.equal(rotate.status, 200)
+  assert.ok((result as any)?.accessToken)
+})
+
 test('pruning deletes expired refresh tokens but keeps unexpired revoked ones', async () => {
   const db = getDb()
   const user = await db.get('SELECT id FROM users WHERE email = ?', [ADMIN_EMAIL])
@@ -240,7 +281,7 @@ test('pruning deletes expired refresh tokens but keeps unexpired revoked ones', 
   const revokedButLive = await issueRefreshToken(user.id, db)
   await revokeRefreshToken(revokedButLive.id, db)
 
-  const deleted = await pruneExpiredRefreshTokens(db)
+  const deleted = await pruneExpiredRefreshTokens()
   assert.equal(deleted, 1)
 
   const expiredRow = await db.get('SELECT id FROM refresh_tokens WHERE id = ?', [expired.id])

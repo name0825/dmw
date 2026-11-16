@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs'
 import crypto from 'crypto'
 import { ADMIN_EMAIL, ADMIN_PASSWORD, COOKIE_SECURE } from '../config.js'
-import { getDb } from './index.js'
+import { getDb, withTransaction } from './index.js'
 
 /**
  * 리프레시 토큰 유효기간 (7 일). 쿠키 maxAge 와 DB expires_at 에 동일하게 사용됨.
@@ -196,8 +196,10 @@ const getRefreshLookupId = (refreshToken: string): string =>
  * @param db - SQLite DB 연결
  * @returns 삭제된 행 수
  */
-export const pruneExpiredRefreshTokens = async (db: any = getDb()): Promise<number> => {
-  const result = await db.run('DELETE FROM refresh_tokens WHERE expires_at < ?', [new Date().toISOString()])
+export const pruneExpiredRefreshTokens = async (): Promise<number> => {
+  const result: { changes?: number } = await withTransaction((tx) =>
+    tx.run('DELETE FROM refresh_tokens WHERE expires_at < ?', [new Date().toISOString()])
+  )
   return result?.changes ?? 0
 }
 
