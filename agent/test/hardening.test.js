@@ -108,6 +108,8 @@ test('windows ACL is applied to an existing dir without marker, and retried afte
 
 test('windows ACL failure only warns', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-aclfail-'))
+  const savedUser = process.env.USERNAME
+  process.env.USERNAME ??= 'dmw-test'
   try {
     const [, warnings] = await quiet(() => ensureStateDir(path.join(root, 'state'), {
       platform: 'win32',
@@ -116,6 +118,7 @@ test('windows ACL failure only warns', async () => {
     assert.equal(warnings.length, 1)
     assert.match(warnings[0], /icacls boom/)
   } finally {
+    if (savedUser === undefined) delete process.env.USERNAME
     fs.rmSync(root, { recursive: true, force: true })
   }
 })
