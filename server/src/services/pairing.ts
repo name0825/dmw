@@ -7,7 +7,7 @@
 import { randomBytes } from 'node:crypto'
 
 import { PAIRING_TTL_MS } from '../config/constants.js'
-import { getDb } from '../database/index.js'
+import { getDb, withTransaction } from '../database/index.js'
 
 /**
  * Inserts a fresh pairing code and returns it.
@@ -34,10 +34,10 @@ const insertPairingCode = async (db: any, expiresAt: string, targetDeviceId: num
  * 만료됐거나 이미 사용된 페어링 코드를 삭제하고 삭제된 행 수를 반환한다.
  */
 export const pruneExpiredPairingCodes = async (db: any = getDb()): Promise<number> => {
-  const result = await db.run(
+  const result = await withTransaction(async () => db.run(
     'DELETE FROM pairing_codes WHERE expires_at < ? OR used_at IS NOT NULL',
     [new Date().toISOString()],
-  )
+  ))
   return result.changes ?? 0
 }
 
@@ -67,7 +67,7 @@ export const handleCreatePairingCode = async (request: any, reply: any) => {
       targetDeviceId = device.id
     }
 
-    const code = await insertPairingCode(getDb(), expiresAt, targetDeviceId)
+    const code = await withTransaction((tx) => insertPairingCode(tx, expiresAt, targetDeviceId))
     reply.code(201).send({ code, expiresAt })
   } catch (error) {
     console.error('Error creating pairing code:', error)
