@@ -7,6 +7,8 @@ import { useDeviceSocket } from './hooks/useDeviceSocket'
 import { useDevices } from './hooks/useDevices'
 import type { Device, DeviceHistoryEntry, PairingInfo } from './types'
 
+const ALERT_PREVIEW_COUNT = 5
+
 type DeviceSortKey = 'name' | 'status' | 'ip' | 'cpu' | 'last_seen'
 
 const DEVICE_SORT_STORAGE_KEY = 'dmw.deviceSort'
@@ -33,6 +35,8 @@ const parseIp = (ip: string | undefined): number[] | null => {
   return parts.length === 4 && parts.every((part) => Number.isInteger(part) && part >= 0) ? parts : null
 }
 
+const liveUsage = (device: Device, value: number | undefined) => (device.status === 'ONLINE' ? (value ?? 0) : 0)
+
 const compareName = (a: Device, b: Device) => a.name.localeCompare(b.name, 'ko') || a.id - b.id
 
 const compareDevices = (sortKey: DeviceSortKey) => (a: Device, b: Device): number => {
@@ -51,8 +55,8 @@ const compareDevices = (sortKey: DeviceSortKey) => (a: Device, b: Device): numbe
       return compareName(a, b)
     }
     case 'cpu': {
-      const cpuA = a.cpu_usage
-      const cpuB = b.cpu_usage
+      const cpuA = a.status === 'ONLINE' ? a.cpu_usage : undefined
+      const cpuB = b.status === 'ONLINE' ? b.cpu_usage : undefined
       if (cpuA === undefined || cpuA === null || cpuB === undefined || cpuB === null) {
         return Number(cpuA === undefined || cpuA === null) - Number(cpuB === undefined || cpuB === null) || compareName(a, b)
       }
@@ -77,6 +81,7 @@ export default function App() {
   const [message, setMessage] = useState('')
   const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [sshOpenId, setSshOpenId] = useState<number | null>(null)
+  const [alertsExpanded, setAlertsExpanded] = useState(false)
 
   const apiBase = getApiBaseUrl()
   const wsBase = getWebSocketBaseUrl()
@@ -280,18 +285,24 @@ export default function App() {
 
           {alerts.length > 0 && (
             <section className="card alerts-panel">
-              <h2>경고</h2>
+              <h2>경고 ({alerts.length})</h2>
               <div className="alert-list">
-                {alerts.map((alert, idx) => (
-                  <div key={`${alert.deviceId}-${idx}`} className={`alert-item ${alert.level}`}>
+                {(alertsExpanded ? alerts : alerts.slice(0, ALERT_PREVIEW_COUNT)).map((alert, idx) => (
+                  <div key={alert.id ?? `${alert.deviceId}-${idx}`} className={`alert-item ${alert.level}`}>
                     <div>
                       <strong>{alert.deviceName ?? devices.find((d) => d.id === alert.deviceId)?.name ?? `#${alert.deviceId}`}</strong>
                       <p>{alert.message}</p>
+                      {alert.createdAt && !Number.isNaN(Date.parse(alert.createdAt)) && <small>{new Date(alert.createdAt).toLocaleString()}</small>}
                     </div>
                     <span>{alert.metric === 'offline' ? 'OFFLINE' : `${alert.metric.toUpperCase()} ${alert.value}%`}</span>
                   </div>
                 ))}
               </div>
+              {alerts.length > ALERT_PREVIEW_COUNT && (
+                <button className="secondary" onClick={() => setAlertsExpanded(!alertsExpanded)}>
+                  {alertsExpanded ? '접기' : `더 보기 (${alerts.length - ALERT_PREVIEW_COUNT}개 더)`}
+                </button>
+              )}
             </section>
           )}
 
@@ -366,18 +377,18 @@ export default function App() {
                       <div className="metric-stack">
                         <div>
                           <label>CPU</label>
-                          <div className="meter"><span style={{ width: `${Math.min(device.cpu_usage ?? 0, 100)}%` }} /></div>
-                          <small>{device.cpu_usage ?? 0}%</small>
+                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.cpu_usage), 100)}%` }} /></div>
+                          <small>{liveUsage(device, device.cpu_usage)}%</small>
                         </div>
                         <div>
                           <label>MEM</label>
-                          <div className="meter"><span style={{ width: `${Math.min(device.memory_usage ?? 0, 100)}%` }} /></div>
-                          <small>{device.memory_usage ?? 0}%</small>
+                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.memory_usage), 100)}%` }} /></div>
+                          <small>{liveUsage(device, device.memory_usage)}%</small>
                         </div>
                         <div>
                           <label>DISK</label>
-                          <div className="meter"><span style={{ width: `${Math.min(device.disk_usage ?? 0, 100)}%` }} /></div>
-                          <small>{device.disk_usage ?? 0}%</small>
+                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
+                          <small>{liveUsage(device, device.disk_usage)}%</small>
                         </div>
                       </div>
                     </div>

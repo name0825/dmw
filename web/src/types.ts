@@ -31,12 +31,14 @@ export type DeviceHistoryEntry = {
 }
 
 export type AlertItem = {
+  id?: number
   deviceId: number
   deviceName?: string | null
   level: 'info' | 'warning' | 'critical' | string
   message: string
   metric: string
   value: number
+  createdAt?: string
 }
 
 export type SshRunResult = {

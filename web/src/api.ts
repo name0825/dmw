@@ -98,7 +98,8 @@ export const mapHistory = (
  * @param {AlertItem[]} alerts - Alert list from the API.
  * @returns {AlertItem[]} Normalized alert list.
  */
-export const normalizeAlerts = (alerts: AlertItem[] = []) => alerts.map((alert) => ({
+export const normalizeAlerts = (alerts: (AlertItem & { created_at?: string })[] = []) => alerts.map((alert) => ({
   ...alert,
   value: Number(alert.value ?? 0),
+  createdAt: alert.createdAt ?? alert.created_at,
 }))
