@@ -44,11 +44,13 @@ const getFreeMemoryUsage = () => {
 
 // os.freemem() on macOS counts only truly free pages, so reclaimable cache
 // (inactive/speculative) shows as used. Mirror Activity Monitor's "Memory Used"
-// instead: active + wired + compressed pages from `vm_stat`.
+// instead: app memory (anonymous - purgeable) + wired + compressed pages from
+// `vm_stat`. "Pages active" is not used because it includes file-backed cache.
 export const parseVmStat = (stdout, total) => {
   const pageSize = Number(stdout.match(/page size of (\d+) bytes/)?.[1])
   const pages = (label) => Number(stdout.match(new RegExp(`${label}:\\s+(\\d+)`))?.[1])
-  const used = pages('Pages active') + pages('Pages wired down') + pages('Pages occupied by compressor')
+  const appMemory = Math.max(0, pages('Anonymous pages') - pages('Pages purgeable'))
+  const used = appMemory + pages('Pages wired down') + pages('Pages occupied by compressor')
   if (!Number.isFinite(pageSize) || !Number.isFinite(used) || total <= 0) return undefined
   return clamp(((used * pageSize) / total) * 100)
 }

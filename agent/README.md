@@ -82,7 +82,7 @@ node agent\src\index.js
 
 ## Linux/macOS에서 실행
 
-메모리는 `os.totalmem()`/`os.freemem()`(macOS 는 `vm_stat` 의 active + wired + compressed 페이지, 활성 상태 보기의 "사용된 메모리" 기준), CPU 는 두 시점의 `os.cpus()` tick 차분으로 계산합니다. 디스크 사용률은 `df -P` 파싱 결과(`(전체 - 가용) / 전체`, macOS 는 APFS 데이터 볼륨 `/System/Volumes/Data`, 그 외는 `/`)이며, 실패 시 heartbeat 요청에서 해당 필드를 생략합니다.
+메모리는 `os.totalmem()`/`os.freemem()`(macOS 는 `vm_stat` 의 앱 메모리(anonymous - purgeable) + wired + compressed 페이지, 활성 상태 보기의 "사용된 메모리" 기준), CPU 는 두 시점의 `os.cpus()` tick 차분으로 계산합니다. 디스크 사용률은 `df -P` 파싱 결과(`(전체 - 가용) / 전체`, macOS 는 APFS 데이터 볼륨 `/System/Volumes/Data`, 그 외는 `/`)이며, 실패 시 heartbeat 요청에서 해당 필드를 생략합니다.
 
 ```bash
 node agent/src/index.js

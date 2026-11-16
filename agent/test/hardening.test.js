@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 import { collectWindowsMetrics } from '../src/metrics/windows.js'
+import { parseVmStat } from '../src/metrics/unix.js'
 import { ensureStateDir } from '../src/credentials.js'
 
 const quiet = async (fn) => {
@@ -13,6 +14,29 @@ const quiet = async (fn) => {
   console.warn = (message) => warnings.push(message)
   try { return [await fn(), warnings] } finally { console.warn = original }
 }
+
+test('macOS memory matches Activity Monitor and excludes file cache', () => {
+  const stdout = [
+    'Mach Virtual Memory Statistics: (page size of 16384 bytes)',
+    'Pages free:                                3000.',
+    'Pages active:                            400000.',
+    'Pages inactive:                          190000.',
+    'Pages speculative:                         5000.',
+    'Pages wired down:                        100000.',
+    'Pages purgeable:                          10000.',
+    'Pages purged:                             20000.',
+    'File-backed pages:                       380000.',
+    'Anonymous pages:                         210000.',
+    'Pages stored in compressor:              150000.',
+    'Pages occupied by compressor:             50000.',
+  ].join('\n')
+  const usage = parseVmStat(stdout, 16 * 1024 ** 3)
+  assert.ok(Math.abs(usage - 33.38) < 0.01, `got ${usage}`)
+})
+
+test('macOS memory returns undefined when vm_stat lacks needed fields', () => {
+  assert.equal(parseVmStat('Mach Virtual Memory Statistics: (page size of 16384 bytes)\nPages active: 5.', 16 * 1024 ** 3), undefined)
+})
 
 test('windows metrics pass a timeout to PowerShell', async () => {
   let options
