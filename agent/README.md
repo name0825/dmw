@@ -82,7 +82,9 @@ node agent\src\index.js
 
 ## Linux/macOS에서 실행
 
-메모리는 `os.totalmem()`/`os.freemem()`(macOS 는 `vm_stat` 의 앱 메모리(anonymous - purgeable) + wired + compressed 페이지, 활성 상태 보기의 "사용된 메모리" 기준), CPU 는 두 시점의 `os.cpus()` tick 차분으로 계산합니다. 디스크 사용률은 `df -P` 파싱 결과(`(전체 - 가용) / 전체`, macOS 는 APFS 데이터 볼륨 `/System/Volumes/Data`, 그 외는 `/`)이며, 실패 시 heartbeat 요청에서 해당 필드를 생략합니다.
+메모리는 `os.totalmem()`/`os.freemem()`(macOS 는 `vm_stat` 의 앱 메모리(anonymous - purgeable) + wired + compressed 페이지, 활성 상태 보기의 "사용된 메모리" 기준), CPU 는 두 시점의 `os.cpus()` tick 차분으로 계산합니다. 디스크 사용률은 `df -P` 결과에서 `(전체 - 가용) / 전체`로 계산하며, 수집에 실패하면 heartbeat 요청에서 해당 필드를 생략합니다.
+
+Linux에서는 물리 디스크를 용량 및 확인 가능한 온도와 함께 표시하고, 마운트된 블록 장치의 파일시스템 사용률은 별도로 표시합니다. 마운트되지 않은 디스크도 목록에 포함되지만 사용률은 계산하지 않으며, `/etc/pve` 같은 가상 파일시스템은 제외합니다. 물리 디스크는 `lsblk`로 수집하고 사용할 수 없으면 sysfs를 이용합니다. 물리 디스크와 파일시스템은 각각 최대 32개이며, 대표 디스크 사용률은 수집된 파일시스템 사용률 중 최댓값입니다. macOS에서는 APFS 데이터 볼륨 `/System/Volumes/Data` 등 `df`로 확인되는 볼륨을 표시합니다.
 
 ```bash
 node agent/src/index.js

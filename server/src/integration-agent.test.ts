@@ -123,6 +123,47 @@ test('a heartbeat stores new scalars and disks, aggregate disk_usage is the max,
   }
 })
 
+test('Linux physical inventory and filesystem usage survive heartbeat storage and device serialization', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'linux-disks-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+    const disks = [
+      { name: 'nvme0n1', kind: 'physical', sizeBytes: 256060514304, tempC: 48 },
+      { name: 'sda', kind: 'physical', sizeBytes: 2000398934016 },
+      { name: 'sdb', kind: 'physical', sizeBytes: 8001563222016 },
+      { name: '/', kind: 'filesystem', usage: 27.5 },
+      { name: '/boot/efi', kind: 'filesystem', usage: 0.9 },
+    ]
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { disks },
+    })
+    assert.equal(response.statusCode, 200)
+    const latest = await getDb().get('SELECT disk_usage, disks_json FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.disk_usage, 27.5)
+    assert.deepEqual(JSON.parse(latest.disks_json), disks)
+    const reply: any = { code() { return this }, send(body: unknown) { this.body = body; return this } }
+    await handleGetDevices({}, reply)
+    assert.deepEqual(reply.body.devices[0].disks, disks)
+    const manyDisks = [
+      ...Array.from({ length: 32 }, (_, i) => ({ name: `sd${i}`, kind: 'physical', sizeBytes: 1000000 })),
+      ...Array.from({ length: 32 }, (_, i) => ({ name: `/mnt/sd${i}`, kind: 'filesystem', usage: i + 1 })),
+    ]
+    const manyResponse = await app.inject({ method: 'POST', url: '/agent/heartbeat', headers: { authorization: `Bearer ${apiKey}` }, payload: { disks: manyDisks } })
+    assert.equal(manyResponse.statusCode, 200)
+    const manyLatest = await getDb().get('SELECT disk_usage, disks_json FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(manyLatest.disk_usage, 32)
+    assert.deepEqual(JSON.parse(manyLatest.disks_json), manyDisks)
+    await handleGetDevices({}, reply)
+    assert.deepEqual(reply.body.devices[0].disks, manyDisks)
+  } finally {
+    await app.close()
+  }
+})
+
 test('invalid extra metric values are dropped instead of rejected, and old-style bodies still work', async () => {
   const app = buildApp()
   try {

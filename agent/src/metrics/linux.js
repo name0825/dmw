@@ -15,6 +15,20 @@ const readMilli = (file) => {
   return Number.isFinite(value) && celsius > 0 && celsius <= MAX_TEMP_C ? celsius : undefined
 }
 const listDir = (dir) => safe(() => fs.readdirSync(dir)) ?? []
+
+export const collectLinuxDisks = (sysRoot = '/sys') => listDir(path.join(sysRoot, 'class/block'))
+  .filter((name) => safe(() => {
+    const device = fs.realpathSync(path.join(sysRoot, 'class/block', name))
+    return !device.split(path.sep).includes('virtual') && !fs.existsSync(path.join(device, 'partition'))
+  }))
+  .slice(0, 32)
+  .map((name) => {
+    const disk = { name, source: `/dev/${name}`, kind: 'physical' }
+    const size = Number(readText(path.join(sysRoot, 'class/block', name, 'size'))) * 512
+    if (Number.isSafeInteger(size) && size > 0) disk.sizeBytes = size
+    return disk
+  })
+
 const maxOf = (values) => {
   const valid = values.filter((value) => value !== undefined)
   return valid.length > 0 ? Math.max(...valid) : undefined

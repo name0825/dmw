@@ -312,6 +312,7 @@ export default function App() {
     const disks = online ? (device.disks ?? []) : []
     const usageDisks = disks.filter((disk) => hasValue(disk.usage))
     const tempDisks = disks.filter((disk) => hasValue(disk.tempC))
+    const physicalDisks = disks.filter((disk) => disk.kind === 'physical')
     const showDiskTemp = isSelected(device, 'disk_temp')
 
     const chips: string[] = []
@@ -347,13 +348,13 @@ export default function App() {
             usageDisks.map((disk) => (
               <div className="metric-item" key={disk.name}>
                 <div className="metric-line">
-                  <label>DISK {disk.name}</label>
+                  <label>{disk.kind === 'filesystem' ? 'FS' : 'DISK'} {disk.name}</label>
                   <small>{disk.usage}%{showDiskTemp && hasValue(disk.tempC) ? ` · ${formatTemp(disk.tempC)}` : ''}</small>
                 </div>
                 <div className="meter"><span className={meterLevel(disk.usage ?? 0)} style={{ width: `${Math.min(disk.usage ?? 0, 100)}%` }} /></div>
               </div>
             ))
-          ) : (
+          ) : physicalDisks.length === 0 ? (
             <div className="metric-item">
               <div className="metric-line">
                 <label>DISK</label>
@@ -361,8 +362,17 @@ export default function App() {
               </div>
               <div className="meter"><span className={meterLevel(liveUsage(device, device.disk_usage))} style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
             </div>
+          ) : null)}
+          {(isSelected(device, 'disk_usage') || showDiskTemp) && physicalDisks.map((disk) => (
+            <div className="metric-item" key={`physical:${disk.name}`} title="물리 디스크입니다. 사용률은 FS 항목에 파일시스템별로 표시됩니다.">
+              <div className="metric-line">
+                <label>DISK {disk.name}</label>
+                <small>{showDiskTemp ? (hasValue(disk.tempC) ? formatTemp(disk.tempC) : '온도 N/A') : '사용률 N/A'}</small>
+              </div>
+              {disk.sizeBytes !== undefined && <small>{(disk.sizeBytes / (disk.sizeBytes >= 1e12 ? 1e12 : 1e9)).toLocaleString(undefined, { maximumFractionDigits: 2 })} {disk.sizeBytes >= 1e12 ? 'TB' : 'GB'}</small>}
+            </div>
           ))}
-          {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.map((disk) => (
+          {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.filter((disk) => disk.kind !== 'physical').map((disk) => (
             <div className="metric-item" key={disk.name}>
               <div className="metric-line">
                 <label>DISK {disk.name}</label>

@@ -3,10 +3,13 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import childProcess from 'node:child_process'
+import { syncBuiltinESMExports } from 'node:module'
+import { promisify } from 'node:util'
 
 import { buildPsScript, parseWindowsOutput, collectWindowsMetrics } from '../src/metrics/windows.js'
-import { parseDfDisks } from '../src/metrics/unix.js'
-import { collectLinuxSensors, parseSmbiosType17, diskBaseName } from '../src/metrics/linux.js'
+import { parseDfDisks, parseLsblkDisks } from '../src/metrics/unix.js'
+import { collectLinuxDisks, collectLinuxSensors, parseSmbiosType17, diskBaseName } from '../src/metrics/linux.js'
 import { METRIC_KEYS, normalizeSelect, parseCollectSelection } from '../src/metrics/select.js'
 import { collectMetrics } from '../src/metrics/index.js'
 
@@ -91,6 +94,7 @@ const DF_OUTPUT = [
   '/dev/loop3            1000      1000         0     100% /snap/core/1',
   '/dev/sdb1         20000000  15000000   5000000      75% /mnt/my data',
   '/dev/sdc1                0         0         0        - /mnt/empty',
+  '/dev/fuse           131072        16    131056       1% /etc/pve',
 ].join('\n')
 
 test('df parsing keeps real block devices, dedupes bind mounts and supports spaces in mounts', () => {
@@ -119,6 +123,72 @@ const withTmp = (fn) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-sys-'))
   try { return fn(root) } finally { fs.rmSync(root, { recursive: true, force: true }) }
 }
+
+test('Linux physical inventory includes unmounted HDDs without inventing usage', () => {
+  assert.deepEqual(parseLsblkDisks(JSON.stringify({ blockdevices: [
+    { name: 'nvme0n1', type: 'disk', size: 256060514304 },
+    { name: 'sda', type: 'disk', size: '2000398934016' },
+    { name: 'sdb', type: 'disk', size: 8001563222016 },
+    { name: 'loop0', type: 'loop', size: 1000 },
+    { name: 'dm-0', type: 'lvm', size: 1000 },
+    { name: '../bad', type: 'disk', size: 1000 },
+  ] })), [
+    { name: 'nvme0n1', source: '/dev/nvme0n1', kind: 'physical', sizeBytes: 256060514304 },
+    { name: 'sda', source: '/dev/sda', kind: 'physical', sizeBytes: 2000398934016 },
+    { name: 'sdb', source: '/dev/sdb', kind: 'physical', sizeBytes: 8001563222016 },
+  ])
+  assert.equal(parseLsblkDisks(JSON.stringify({ blockdevices: Array.from({ length: 40 }, (_, i) => ({ name: `sd${i}`, type: 'disk', size: 1000 })) })).length, 32)
+  assert.deepEqual(parseLsblkDisks('{}'), [])
+  assert.throws(() => parseLsblkDisks('invalid JSON'))
+})
+
+test('Linux collector retains 32 physical disks and 32 filesystems with measured aggregate usage', async (t) => {
+  const devices = Array.from({ length: 32 }, (_, i) => ({ name: `sd${i}`, type: 'disk', size: 1000000 }))
+  const exec = () => { throw new Error('unexpected callback invocation') }
+  exec[promisify.custom] = async (command) => {
+    if (command === 'lsblk') return { stdout: JSON.stringify({ blockdevices: devices }) }
+    assert.equal(command, 'df')
+    return { stdout: ['Filesystem 1024-blocks Used Available Capacity Mounted on', ...devices.map((disk, i) => `/dev/${disk.name} 100 ${i + 1} ${99 - i} ${i + 1}% /mnt/${disk.name}`)].join('\n') }
+  }
+  const originalExecFile = childProcess.execFile
+  childProcess.execFile = exec
+  t.mock.method(os, 'platform', () => 'linux')
+  t.mock.method(fs, 'statSync', () => ({ isBlockDevice: () => true }))
+  syncBuiltinESMExports()
+  try {
+    const { collectUnixMetrics } = await import('../src/metrics/unix.js?disk-limits')
+    const metrics = await collectUnixMetrics({ select: ['disk_usage'] })
+    assert.equal(metrics.disks.length, 64)
+    assert.equal(metrics.disks.filter((disk) => disk.kind === 'physical').length, 32)
+    assert.equal(metrics.disks.filter((disk) => disk.kind === 'filesystem').length, 32)
+    assert.equal(metrics.diskUsage, 32)
+    assert.ok(metrics.disks.filter((disk) => disk.kind === 'physical').every((disk) => disk.usage === undefined))
+  } finally {
+    childProcess.execFile = originalExecFile
+    t.mock.restoreAll()
+    syncBuiltinESMExports()
+  }
+})
+
+test('sysfs inventory fallback excludes partitions and virtual devices and retains temperatures', () => withTmp((root) => {
+  const disk = path.join(root, 'devices/pci/nvme0n1')
+  const virtual = path.join(root, 'devices/virtual/block/dm-0')
+  fs.mkdirSync(path.join(disk, 'nvme0n1p2'), { recursive: true })
+  fs.mkdirSync(virtual, { recursive: true })
+  fs.mkdirSync(path.join(root, 'class/block'), { recursive: true })
+  fs.writeFileSync(path.join(disk, 'size'), '500000000')
+  fs.writeFileSync(path.join(disk, 'nvme0n1p2/partition'), '2')
+  fs.symlinkSync(disk, path.join(root, 'class/block/nvme0n1'), 'junction')
+  fs.symlinkSync(path.join(disk, 'nvme0n1p2'), path.join(root, 'class/block/nvme0n1p2'), 'junction')
+  fs.symlinkSync(virtual, path.join(root, 'class/block/dm-0'), 'junction')
+  const hwmon = path.join(root, 'class/hwmon/hwmon0')
+  fs.mkdirSync(path.join(hwmon, 'device/nvme0n1'), { recursive: true })
+  fs.writeFileSync(path.join(hwmon, 'name'), 'nvme')
+  fs.writeFileSync(path.join(hwmon, 'temp1_input'), '48000')
+  const disks = collectLinuxDisks(root)
+  assert.deepEqual(disks, [{ name: 'nvme0n1', source: '/dev/nvme0n1', kind: 'physical', sizeBytes: 256000000000 }])
+  assert.deepEqual(collectLinuxSensors({ sysRoot: root, select: ['disk_temp'], disks }), { diskTemps: [48] })
+}))
 const write = (root, rel, content) => {
   const file = path.join(root, rel)
   fs.mkdirSync(path.dirname(file), { recursive: true })

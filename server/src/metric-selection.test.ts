@@ -51,6 +51,38 @@ test('applySelection drops unselected metrics and per-disk fields', () => {
   assert.deepEqual(applySelection(metrics, []), {})
 })
 
+test('physical disk inventory survives sanitization and selection without fabricated usage', () => {
+  const metrics = sanitizeExtraMetrics({ disks: [
+    { name: 'sda', kind: 'physical', sizeBytes: 2000398934016, usage: 90 },
+    { name: 'nvme0n1', kind: 'physical', sizeBytes: 256060514304, tempC: 48 },
+    { name: '/', kind: 'filesystem', usage: 27.5 },
+    { name: 'invalid', kind: 'other' },
+  ] })
+  assert.deepEqual(metrics.disks, [
+    { name: 'sda', kind: 'physical', sizeBytes: 2000398934016 },
+    { name: 'nvme0n1', kind: 'physical', sizeBytes: 256060514304, tempC: 48 },
+    { name: '/', kind: 'filesystem', usage: 27.5 },
+  ])
+  assert.deepEqual(applySelection(metrics, ['disk_usage']).disks, [
+    { name: 'sda', kind: 'physical', sizeBytes: 2000398934016 },
+    { name: 'nvme0n1', kind: 'physical', sizeBytes: 256060514304 },
+    { name: '/', kind: 'filesystem', usage: 27.5 },
+  ])
+  assert.deepEqual(applySelection(metrics, ['disk_temp']).disks, metrics.disks?.slice(0, 2))
+  assert.deepEqual(applySelection(metrics, []), {})
+  assert.deepEqual(sanitizeExtraMetrics({ disks: [{ name: 'sda', kind: 'physical', sizeBytes: Infinity }] }).disks, [{ name: 'sda', kind: 'physical' }])
+})
+
+test('disk limits independently allow 32 physical devices and 32 volumes without expanding legacy limits', () => {
+  const physical = Array.from({ length: 32 }, (_, i) => ({ name: `sd${i}`, kind: 'physical' }))
+  const volumes = Array.from({ length: 32 }, (_, i) => ({ name: `/mnt/sd${i}`, kind: 'filesystem', usage: i + 1 }))
+  assert.deepEqual(sanitizeExtraMetrics({ disks: [...physical, ...volumes] }).disks, [...physical, ...volumes])
+  assert.deepEqual(sanitizeExtraMetrics({ disks: [...volumes, ...physical] }).disks, [...volumes, ...physical])
+  assert.equal(sanitizeExtraMetrics({ disks: [...physical, ...physical] }).disks?.length, 32)
+  assert.equal(sanitizeExtraMetrics({ disks: [...volumes, ...volumes] }).disks?.length, 32)
+  assert.equal(sanitizeExtraMetrics({ disks: Array.from({ length: 64 }, (_, i) => ({ name: `d${i}`, usage: 1 })) }).disks?.length, 32)
+})
+
 test('serializeDeviceRow hides disks_json and exposes parsed disks and selection', () => {
   const row = serializeDeviceRow({ id: 1, disks_json: '[{"name":"C:","usage":5}]', metric_selection: '["cpu_usage"]' })
   assert.deepEqual(row, { id: 1, metric_selection: ['cpu_usage'], disks: [{ name: 'C:', usage: 5 }] })

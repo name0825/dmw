@@ -1,7 +1,8 @@
 import os from 'node:os'
+import fs from 'node:fs'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { collectLinuxSensors } from './linux.js'
+import { collectLinuxDisks, collectLinuxSensors } from './linux.js'
 import { normalizeSelect } from './select.js'
 
 const execFileAsync = promisify(execFile)
@@ -105,7 +106,7 @@ export const parseDfDisks = (stdout, platform = os.platform()) => {
     const cols = line.trim().split(/\s+/)
     const source = cols[0]
     const mount = cols.slice(5).join(' ')
-    if (!source?.startsWith('/dev/') || source.startsWith('/dev/loop') || !mount || seen.has(source)) continue
+    if (!source?.startsWith('/dev/') || source === '/dev/fuse' || source.startsWith('/dev/loop') || !mount || seen.has(source)) continue
     if (platform === 'darwin' && (mount === '/' || (mount.startsWith('/System/Volumes/') && mount !== '/System/Volumes/Data'))) continue
     const size = Number(cols[1])
     const available = Number(cols[3])
@@ -119,22 +120,52 @@ export const parseDfDisks = (stdout, platform = os.platform()) => {
 const getDisks = async () => {
   try {
     const { stdout } = await execFileAsync('df', ['-P', '-k'], { timeout: 10000 })
-    const disks = parseDfDisks(stdout)
+    const disks = parseDfDisks(stdout).filter((disk) => {
+      if (os.platform() !== 'linux') return true
+      try { return fs.statSync(disk.source).isBlockDevice() } catch { return false }
+    })
+    if (os.platform() === 'linux') return disks
     if (disks.length > 0) return disks
   } catch {
     // fall through to the single-path fallback
   }
+  if (os.platform() === 'linux') return []
   const usage = await getDiskUsage()
   return usage === undefined ? [] : [{ name: DISK_PATH, usage: Number(usage.toFixed(1)) }]
+}
+
+export const parseLsblkDisks = (stdout) => {
+  const { blockdevices } = JSON.parse(stdout)
+  if (!Array.isArray(blockdevices)) return []
+  return blockdevices
+    .filter((disk) => disk?.type === 'disk' && typeof disk.name === 'string' && disk.name.length <= 64 && /^[a-zA-Z0-9][\w.-]*$/.test(disk.name))
+    .slice(0, MAX_DISKS)
+    .map((disk) => {
+      const result = { name: disk.name, source: `/dev/${disk.name}`, kind: 'physical' }
+      const size = Number(disk.size)
+      if (Number.isSafeInteger(size) && size > 0) result.sizeBytes = size
+      return result
+    })
+}
+
+const getPhysicalDisks = async () => {
+  try {
+    const { stdout } = await execFileAsync('lsblk', ['--json', '--bytes', '--nodeps', '--output', 'NAME,TYPE,SIZE'], { timeout: 10000 })
+    const disks = parseLsblkDisks(stdout)
+    if (disks.length > 0) return disks
+  } catch {}
+  return collectLinuxDisks()
 }
 
 export const collectUnixMetrics = async ({ select } = {}) => {
   const sel = normalizeSelect(select)
   const wantDisks = sel.has('disk_usage') || sel.has('disk_temp')
-  const [cpuUsage, memoryUsage, volumes] = await Promise.all([
+  const linux = os.platform() === 'linux'
+  const [cpuUsage, memoryUsage, volumes, physicalDisks] = await Promise.all([
     sel.has('cpu_usage') ? getCpuUsage() : undefined,
     sel.has('memory_usage') ? getMemoryUsage() : undefined,
     wantDisks ? getDisks() : [],
+    wantDisks && linux ? getPhysicalDisks() : [],
   ])
 
   const metrics = {}
@@ -142,8 +173,8 @@ export const collectUnixMetrics = async ({ select } = {}) => {
   if (memoryUsage !== undefined) metrics.memoryUsage = Number(memoryUsage.toFixed(1))
 
   let sensors = {}
-  if (os.platform() === 'linux') {
-    try { sensors = collectLinuxSensors({ select: sel, disks: volumes }) } catch { sensors = {} }
+  if (linux) {
+    try { sensors = collectLinuxSensors({ select: sel, disks: physicalDisks }) } catch { sensors = {} }
   }
   for (const key of ['cpuTempC', 'memoryTempC', 'cpuClockMhz', 'memoryClockMhz']) {
     if (sensors[key] !== undefined) metrics[key] = sensors[key]
@@ -154,14 +185,19 @@ export const collectUnixMetrics = async ({ select } = {}) => {
   }
 
   const disks = volumes
-    .map((volume, index) => {
+    .map((volume) => {
       const disk = { name: volume.name }
+      if (linux) disk.kind = 'filesystem'
       if (sel.has('disk_usage')) disk.usage = volume.usage
-      if (sensors.diskTemps?.[index] !== undefined) disk.tempC = sensors.diskTemps[index]
       return disk
     })
     .filter((disk) => disk.usage !== undefined || disk.tempC !== undefined)
-  if (disks.length > 0) metrics.disks = disks
-  if (sel.has('disk_usage') && disks.length > 0) metrics.diskUsage = Math.max(...disks.map((disk) => disk.usage))
+  const inventory = physicalDisks.map(({ source, ...disk }, index) => {
+    if (sensors.diskTemps?.[index] !== undefined) disk.tempC = sensors.diskTemps[index]
+    return disk
+  })
+  if (inventory.length > 0 || disks.length > 0) metrics.disks = [...inventory, ...disks]
+  const usages = disks.flatMap((disk) => disk.usage === undefined ? [] : [disk.usage])
+  if (sel.has('disk_usage') && usages.length > 0) metrics.diskUsage = Math.max(...usages)
   return metrics
 }

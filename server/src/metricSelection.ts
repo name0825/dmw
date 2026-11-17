@@ -13,7 +13,7 @@ export const METRIC_KEYS = [
 
 export type MetricKey = (typeof METRIC_KEYS)[number]
 
-export type DiskMetric = { name: string; usage?: number; tempC?: number }
+export type DiskMetric = { name: string; kind?: 'physical' | 'filesystem'; sizeBytes?: number; usage?: number; tempC?: number }
 
 export type ExtraMetrics = {
   cpuTemp?: number
@@ -68,18 +68,29 @@ const sanitizeClock = (value: unknown): number | undefined => {
 const sanitizeDisks = (value: unknown): DiskMetric[] | undefined => {
   if (!Array.isArray(value)) return undefined
   const disks: DiskMetric[] = []
-  for (const item of value.slice(0, MAX_DISKS)) {
+  let physicalCount = 0
+  let volumeCount = 0
+  for (const item of value.slice(0, MAX_DISKS * 2)) {
     if (!item || typeof item !== 'object') continue
-    const { name: rawName, usage: rawUsage, tempC: rawTemp } = item as Record<string, unknown>
+    const { name: rawName, kind, sizeBytes, usage: rawUsage, tempC: rawTemp } = item as Record<string, unknown>
     if (typeof rawName !== 'string') continue
     const name = rawName.trim()
     if (name.length < 1 || name.length > MAX_DISK_NAME_LENGTH) continue
     const disk: DiskMetric = { name }
+    if (kind === 'physical' || kind === 'filesystem') disk.kind = kind
+    if (disk.kind === 'physical' && typeof sizeBytes === 'number' && Number.isSafeInteger(sizeBytes) && sizeBytes > 0) disk.sizeBytes = sizeBytes
     const usage = normalizeUsage(rawUsage)
-    if (usage !== null) disk.usage = usage
+    if (usage !== null && disk.kind !== 'physical') disk.usage = usage
     const tempC = sanitizeTemp(rawTemp)
     if (tempC !== undefined) disk.tempC = tempC
-    if (disk.usage === undefined && disk.tempC === undefined) continue
+    if (disk.kind !== 'physical' && disk.usage === undefined && disk.tempC === undefined) continue
+    if (disk.kind === 'physical') {
+      if (physicalCount >= MAX_DISKS) continue
+      physicalCount++
+    } else {
+      if (volumeCount >= MAX_DISKS) continue
+      volumeCount++
+    }
     disks.push(disk)
   }
   return disks
@@ -117,11 +128,13 @@ export const applySelection = <T extends HeartbeatMetrics>(metrics: T, selection
     const disks = result.disks
       .map((disk) => {
         const next: DiskMetric = { name: disk.name }
+        if (disk.kind) next.kind = disk.kind
+        if (disk.sizeBytes !== undefined) next.sizeBytes = disk.sizeBytes
         if (keepUsage && disk.usage !== undefined) next.usage = disk.usage
         if (keepTemp && disk.tempC !== undefined) next.tempC = disk.tempC
         return next
       })
-      .filter((disk) => disk.usage !== undefined || disk.tempC !== undefined)
+      .filter((disk) => disk.usage !== undefined || disk.tempC !== undefined || (disk.kind === 'physical' && (keepUsage || keepTemp)))
     if (disks.length > 0) result.disks = disks
     else delete result.disks
   }

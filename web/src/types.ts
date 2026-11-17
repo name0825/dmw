@@ -12,6 +12,8 @@ export type MetricKey =
 
 export type DiskMetric = {
   name: string
+  kind?: 'physical' | 'filesystem'
+  sizeBytes?: number
   usage?: number
   tempC?: number
 }
