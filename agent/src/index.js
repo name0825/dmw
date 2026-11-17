@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url'
 import { parseArgs, resolvePairingInput } from './config.js'
 import { loadCredentials, saveCredentials, clearCredentials, acquireLock, readState, writeState, getStateDir } from './credentials.js'
 import { pairWithServer, sendHeartbeat, unpairFromServer } from './client.js'
-import { collectMetrics } from './metrics/index.js'
+import { collectMetrics, parseCollectSelection } from './metrics/index.js'
 import { sleep, computeBackoffDelay } from './retry.js'
 import { HttpError } from './http.js'
 import { configureAutostart, ensureAutostart, installLauncher } from './autostart.js'
@@ -74,6 +74,7 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
   let consecutiveFailures = 0
   let nextDelay = intervalMs
   let confirmed = false
+  let collect
   const stop = () => { running = false }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
@@ -92,9 +93,10 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
         lastHeartbeat = Date.now()
         lastKey = credentials.apiKey
         try {
-          const metrics = await collectMetrics()
+          const metrics = await collectMetrics(collect)
           if (loadCredentials()?.apiKey === credentials.apiKey) {
-            await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+            const response = await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+            collect = parseCollectSelection(response) ?? collect
             if (!confirmed) {
               confirmed = true
               try { confirmActiveVersion() } catch (confirmError) { console.warn(`[update] 활성 버전 확정 실패: ${confirmError.message}`) }

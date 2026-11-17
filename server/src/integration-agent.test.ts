@@ -17,6 +17,8 @@ const { authMiddleware } = await import('./middleware/auth.js')
 const { isPublicRoute } = await import('./auth.js')
 const { registerAgentRoutes } = await import('./routes/agent.js')
 
+const { METRIC_KEYS: ALL_METRIC_KEYS } = await import('./metricSelection.js')
+
 const buildApp = () => {
   const app = Fastify()
   app.addHook('preHandler', async (request: any, reply: any) => {
@@ -60,7 +62,166 @@ test('a heartbeat with a valid API key is accepted', async () => {
       headers: { authorization: `Bearer ${apiKey}` },
     })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json(), { status: 'ok' })
+    assert.deepEqual(response.json(), { status: 'ok', collect: ALL_METRIC_KEYS })
+  } finally {
+    await app.close()
+  }
+})
+
+test('a heartbeat stores new scalars and disks, aggregate disk_usage is the max, and /devices exposes them', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'extra-metrics-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: {
+        cpuUsage: 10,
+        memoryUsage: 20,
+        cpuTempC: 55,
+        memoryTempC: 40,
+        cpuClockMhz: 3200,
+        memoryClockMhz: 4800,
+        disks: [
+          { name: 'C:', usage: 40.5, tempC: 35 },
+          { name: 'D:', usage: 90 },
+          { name: '', usage: 10 },
+          { name: 'bad', usage: 500, tempC: 999 },
+        ],
+      },
+    })
+    assert.equal(response.statusCode, 200)
+
+    const latest = await getDb().get('SELECT * FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.disk_usage, 90)
+    assert.equal(latest.cpu_temp, 55)
+    assert.equal(latest.memory_temp, 40)
+    assert.equal(latest.cpu_clock, 3200)
+    assert.equal(latest.memory_clock, 4800)
+    assert.deepEqual(JSON.parse(latest.disks_json), [
+      { name: 'C:', usage: 40.5, tempC: 35 },
+      { name: 'D:', usage: 90 },
+    ])
+    const history = await getDb().get('SELECT * FROM device_metrics_history WHERE device_id = ?', [deviceId])
+    assert.equal(history.cpu_temp, 55)
+    assert.equal(history.disk_usage, 90)
+
+    const reply: any = { code() { return this }, send(body: unknown) { this.body = body; return this } }
+    await handleGetDevices({}, reply)
+    const device = reply.body.devices[0]
+    assert.equal(device.cpu_temp, 55)
+    assert.equal(device.memory_clock, 4800)
+    assert.equal(device.disks.length, 2)
+    assert.deepEqual(device.metric_selection, ALL_METRIC_KEYS)
+    assert.equal('disks_json' in device, false)
+    assert.equal('agent_key_hash' in device, false)
+  } finally {
+    await app.close()
+  }
+})
+
+test('invalid extra metric values are dropped instead of rejected, and old-style bodies still work', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'old-agent-body-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+
+    const dirty = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { cpuUsage: 5, cpuTempC: 'hot', memoryClockMhz: -1, disks: 'nope' },
+    })
+    assert.equal(dirty.statusCode, 200)
+
+    const legacy = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { cpuUsage: 6, memoryUsage: 7, diskUsage: 8, agentVersion: '1.0.0' },
+    })
+    assert.equal(legacy.statusCode, 200)
+
+    const latest = await getDb().get('SELECT * FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.cpu_usage, 6)
+    assert.equal(latest.disk_usage, 8)
+    assert.equal(latest.cpu_temp, null)
+    assert.equal(latest.memory_clock, null)
+    assert.equal(latest.disks_json, null)
+
+    const invalidLegacy = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { cpuUsage: 101 },
+    })
+    assert.equal(invalidLegacy.statusCode, 400)
+  } finally {
+    await app.close()
+  }
+})
+
+test('deselected metrics are dropped from heartbeats, NULLed in latest, and reported in collect', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'selection-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+    const headers = { authorization: `Bearer ${apiKey}` }
+
+    await app.inject({ method: 'POST', url: '/agent/heartbeat', headers, payload: { cpuUsage: 10, diskUsage: 80, cpuTempC: 50 } })
+
+    const { handleUpdateMetricSelection } = await import('./services/devices.js')
+    const reply: any = { code(status: number) { this.status = status; return this }, send(body: unknown) { this.body = body; return this } }
+    await handleUpdateMetricSelection({ params: { id: deviceId }, body: { metrics: ['cpu_usage', 'memory_usage'] } }, reply)
+    assert.deepEqual(reply.body, { metrics: ['cpu_usage', 'memory_usage'] })
+
+    let latest = await getDb().get('SELECT * FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.cpu_usage, 10)
+    assert.equal(latest.disk_usage, null)
+    assert.equal(latest.cpu_temp, null)
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers,
+      payload: { cpuUsage: 11, diskUsage: 90, cpuTempC: 60, cpuClockMhz: 3000, disks: [{ name: 'C:', usage: 90, tempC: 30 }] },
+    })
+    assert.deepEqual(response.json(), { status: 'ok', collect: ['cpu_usage', 'memory_usage'] })
+
+    latest = await getDb().get('SELECT * FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.cpu_usage, 11)
+    assert.equal(latest.disk_usage, null)
+    assert.equal(latest.cpu_temp, null)
+    assert.equal(latest.cpu_clock, null)
+    assert.equal(latest.disks_json, null)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a selection change committed while a heartbeat is authenticating still applies to that heartbeat', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'selection-race-key-1234567890'
+    const deviceId = await seedPairedDevice(apiKey)
+
+    const heartbeat = app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { cpuUsage: 10, diskUsage: 80 },
+    })
+    await new Promise((resolve) => setTimeout(resolve, 1))
+    await getDb().run('UPDATE devices SET metric_selection = ? WHERE id = ?', [JSON.stringify(['cpu_usage']), deviceId])
+
+    const response = await heartbeat
+    assert.deepEqual(response.json(), { status: 'ok', collect: ['cpu_usage'] })
+    const latest = await getDb().get('SELECT cpu_usage, disk_usage FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(latest.cpu_usage, 10)
+    assert.equal(latest.disk_usage, null)
   } finally {
     await app.close()
   }

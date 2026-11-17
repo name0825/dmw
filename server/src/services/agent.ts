@@ -10,6 +10,7 @@ import { broadcastState } from './ws.js'
 import { isValidIp, isValidMac, normalizeIp, normalizeMac, normalizeUsage } from '../utils/validation.js'
 import { generateApiKey } from '../utils/crypto.js'
 import { STATUS_NOT_PAIRED, STATUS_ONLINE, STATUS_OFFLINE } from '../config/constants.js'
+import { applySelection, parseMetricSelection, sanitizeExtraMetrics, type HeartbeatMetrics, type MetricKey } from '../metricSelection.js'
 
 // Length of the first 12 characters of API key (stored as hint in DB)
 export const API_KEY_HINT_LEN = 12
@@ -66,12 +67,21 @@ const extractHeartbeatMetrics = (body: any) => {
     memoryUsage?: number
     diskUsage?: number
   }
+  const extra = sanitizeExtraMetrics(body)
+  let aggregateDiskUsage: number | undefined = diskUsage ?? undefined
+  if (aggregateDiskUsage === undefined && extra.disks) {
+    const usages = extra.disks.flatMap((disk) => (disk.usage === undefined ? [] : [disk.usage]))
+    if (usages.length > 0) aggregateDiskUsage = Math.max(...usages)
+  }
   return {
     cpuUsage: cpuUsage ?? undefined,
     memoryUsage: memoryUsage ?? undefined,
-    diskUsage: diskUsage ?? undefined,
-  }
+    diskUsage: aggregateDiskUsage,
+    ...extra,
+  } as HeartbeatMetrics
 }
+
+const LEGACY_USAGE_KEYS = ['cpuUsage', 'memoryUsage', 'diskUsage'] as const
 
 const AGENT_VERSION_PATTERN = /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/
 
@@ -253,7 +263,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
     return
   }
 
-  const metrics = extractHeartbeatMetrics(request.body)
+  const reportedMetrics = extractHeartbeatMetrics(request.body)
   const agentVersion = extractAgentVersion(request.body)
   const db = getDb()
 
@@ -275,13 +285,15 @@ export const handleHeartbeat = async (request: any, reply: any) => {
       return
     }
 
-    for (const [key, value] of Object.entries(metrics)) {
+    for (const key of LEGACY_USAGE_KEYS) {
+      const value = reportedMetrics[key]
       if (value !== undefined && normalizeUsage(value) === null) {
         reply.code(400).send({ message: `Invalid ${key}` })
         return
       }
     }
 
+    let selection: MetricKey[] = []
     const deviceId = device.id
     const now = new Date().toISOString()
 
@@ -297,16 +309,35 @@ export const handleHeartbeat = async (request: any, reply: any) => {
       )
       if (result.changes !== 1) return false
 
-      if (metrics.cpuUsage !== undefined || metrics.memoryUsage !== undefined || metrics.diskUsage !== undefined) {
+      const current = await tx.get('SELECT metric_selection FROM devices WHERE id = ?', [deviceId])
+      selection = parseMetricSelection(current?.metric_selection)
+      const metrics = applySelection(reportedMetrics, selection)
+      const disksJson = metrics.disks ? JSON.stringify(metrics.disks) : null
+      const hasMetrics =
+        metrics.cpuUsage !== undefined ||
+        metrics.memoryUsage !== undefined ||
+        metrics.diskUsage !== undefined ||
+        metrics.cpuTemp !== undefined ||
+        metrics.memoryTemp !== undefined ||
+        metrics.cpuClock !== undefined ||
+        metrics.memoryClock !== undefined ||
+        disksJson !== null
+
+      if (hasMetrics) {
+        const values = [
+          metrics.cpuUsage, metrics.memoryUsage, metrics.diskUsage,
+          metrics.cpuTemp, metrics.memoryTemp, metrics.cpuClock, metrics.memoryClock,
+          disksJson,
+        ]
         await tx.run(
-          'INSERT INTO device_metrics_latest (device_id, cpu_usage, memory_usage, disk_usage, updated_at) VALUES (?, ?, ?, ?, ?) ' +
-          'ON CONFLICT(device_id) DO UPDATE SET cpu_usage=COALESCE(excluded.cpu_usage, cpu_usage), memory_usage=COALESCE(excluded.memory_usage, memory_usage), disk_usage=COALESCE(excluded.disk_usage, disk_usage), updated_at=excluded.updated_at',
-          [deviceId, metrics.cpuUsage, metrics.memoryUsage, metrics.diskUsage, now]
+          'INSERT INTO device_metrics_latest (device_id, cpu_usage, memory_usage, disk_usage, cpu_temp, memory_temp, cpu_clock, memory_clock, disks_json, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ' +
+          'ON CONFLICT(device_id) DO UPDATE SET cpu_usage=COALESCE(excluded.cpu_usage, cpu_usage), memory_usage=COALESCE(excluded.memory_usage, memory_usage), disk_usage=COALESCE(excluded.disk_usage, disk_usage), cpu_temp=COALESCE(excluded.cpu_temp, cpu_temp), memory_temp=COALESCE(excluded.memory_temp, memory_temp), cpu_clock=COALESCE(excluded.cpu_clock, cpu_clock), memory_clock=COALESCE(excluded.memory_clock, memory_clock), disks_json=COALESCE(excluded.disks_json, disks_json), updated_at=excluded.updated_at',
+          [deviceId, ...values, now]
         )
 
         await tx.run(
-          'INSERT INTO device_metrics_history (device_id, timestamp, cpu_usage, memory_usage, disk_usage) VALUES (?, ?, ?, ?, ?)',
-          [deviceId, now, metrics.cpuUsage, metrics.memoryUsage, metrics.diskUsage]
+          'INSERT INTO device_metrics_history (device_id, timestamp, cpu_usage, memory_usage, disk_usage, cpu_temp, memory_temp, cpu_clock, memory_clock, disks_json) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+          [deviceId, now, ...values]
         )
       }
 
@@ -326,7 +357,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
       console.error('Error broadcasting state after heartbeat:', broadcastError)
     }
 
-    reply.send({ status: 'ok' })
+    reply.send({ status: 'ok', collect: selection })
   } catch (error) {
     console.error('Error during agent heartbeat:', error)
     reply.code(500).send({ message: 'Internal server error during heartbeat' })

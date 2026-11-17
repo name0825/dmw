@@ -267,6 +267,38 @@ input {
   background: linear-gradient(90deg, #38bdf8, #34d399);
 }
 
+.metric-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.metric-chip {
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  background: rgba(148, 163, 184, 0.14);
+}
+
+.metric-select {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.8rem;
+  color: #cbd5e1;
+}
+
+.metric-select label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.metric-select input {
+  width: auto;
+}
+
 .device-meta {
   display: flex;
   flex-direction: column;

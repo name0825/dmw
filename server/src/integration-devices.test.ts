@@ -253,3 +253,50 @@ test('device data persists across the DB pool being closed and reopened on the s
     await app.close()
   }
 })
+
+test('PUT /devices/:id/metric-selection validates input, requires auth, persists and is reflected by GET /devices', async () => {
+  const app = buildApp()
+  try {
+    const headers = await adminAuthHeader()
+    const created = await app.inject({
+      method: 'POST',
+      url: '/devices',
+      headers,
+      payload: { name: 'Selection PC', mac_address: 'AA:BB:CC:DD:EE:31', ip_address: '192.168.1.81' },
+    })
+    const id = created.json().deviceId
+
+    const unauthorized = await app.inject({ method: 'PUT', url: `/devices/${id}/metric-selection`, payload: { metrics: [] } })
+    assert.equal(unauthorized.statusCode, 401)
+
+    for (const payload of [{}, { metrics: 'cpu_usage' }, { metrics: ['cpu_usage', 'bogus'] }, { metrics: [1] }]) {
+      const bad = await app.inject({ method: 'PUT', url: `/devices/${id}/metric-selection`, headers, payload })
+      assert.equal(bad.statusCode, 400)
+    }
+
+    const missing = await app.inject({ method: 'PUT', url: '/devices/999999/metric-selection', headers, payload: { metrics: [] } })
+    assert.equal(missing.statusCode, 404)
+
+    const before = await getDb().get('SELECT updated_at FROM devices WHERE id = ?', [id])
+    const ok = await app.inject({
+      method: 'PUT',
+      url: `/devices/${id}/metric-selection`,
+      headers,
+      payload: { metrics: ['cpu_temp', 'cpu_usage', 'cpu_usage'] },
+    })
+    assert.equal(ok.statusCode, 200)
+    assert.deepEqual(ok.json(), { metrics: ['cpu_usage', 'cpu_temp'] })
+    const after = await getDb().get('SELECT updated_at, metric_selection FROM devices WHERE id = ?', [id])
+    assert.equal(after.updated_at, before.updated_at)
+    assert.equal(after.metric_selection, JSON.stringify(['cpu_usage', 'cpu_temp']))
+
+    const list = await app.inject({ method: 'GET', url: '/devices', headers })
+    assert.deepEqual(list.json().devices[0].metric_selection, ['cpu_usage', 'cpu_temp'])
+
+    const empty = await app.inject({ method: 'PUT', url: `/devices/${id}/metric-selection`, headers, payload: { metrics: [] } })
+    assert.equal(empty.statusCode, 200)
+    assert.deepEqual(empty.json(), { metrics: [] })
+  } finally {
+    await app.close()
+  }
+})

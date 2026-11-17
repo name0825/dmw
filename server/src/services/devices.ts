@@ -1,6 +1,7 @@
 import { STATUS_NOT_PAIRED, STATUS_WAKE_TIMEOUT } from '../config/constants.js'
 import { getDb, withTransaction } from '../database/index.js'
 import { isValidIp, isValidMac, normalizeIp, normalizeMac } from '../utils/validation.js'
+import { serializeDeviceRow, validateMetricSelection, type MetricKey } from '../metricSelection.js'
 import { sendWakePacket } from './wake.js'
 import { broadcastState } from './ws.js'
 
@@ -42,12 +43,16 @@ export const handleGetDevices = async (_request: any, reply: any) => {
               devices.agent_paired, devices.paired_at, devices.last_seen, devices.status, devices.agent_version,
               devices.created_at, devices.updated_at,
               devices.ssh_username, devices.ssh_port, devices.ssh_host_key,
-              device_metrics_latest.cpu_usage, device_metrics_latest.memory_usage, device_metrics_latest.disk_usage
+              devices.metric_selection,
+              device_metrics_latest.cpu_usage, device_metrics_latest.memory_usage, device_metrics_latest.disk_usage,
+              device_metrics_latest.cpu_temp, device_metrics_latest.memory_temp,
+              device_metrics_latest.cpu_clock, device_metrics_latest.memory_clock,
+              device_metrics_latest.disks_json
        FROM devices
        LEFT JOIN device_metrics_latest ON device_metrics_latest.device_id = devices.id
        ORDER BY devices.last_seen DESC`
     )
-    reply.send({ devices })
+    reply.send({ devices: devices.map(serializeDeviceRow) })
   } catch (error) {
     console.error('Error getting devices:', error)
     reply.code(500).send({ message: 'Internal server error' })
@@ -233,6 +238,70 @@ export const handleUpdateDevice = async (request: any, reply: any) => {
     reply.send({ message: 'Device updated successfully' })
   } catch (error) {
     console.error('Error updating device:', error)
+    reply.code(500).send({ message: 'Internal server error' })
+  }
+}
+
+const METRIC_COLUMNS: Record<MetricKey, string[]> = {
+  cpu_usage: ['cpu_usage'],
+  memory_usage: ['memory_usage'],
+  disk_usage: ['disk_usage', 'disks_json'],
+  cpu_temp: ['cpu_temp'],
+  memory_temp: ['memory_temp'],
+  disk_temp: ['disks_json'],
+  cpu_clock: ['cpu_clock'],
+  memory_clock: ['memory_clock'],
+}
+
+/**
+ * Handles updating which metrics an agent collects for a device.
+ * 선택 해제된 항목의 최신 값은 NULL 로 비워, 오래된 값이 알림을 계속 일으키지 않게 한다.
+ * updated_at 은 WAKE_TIMEOUT 기준 시각이므로 건드리지 않는다.
+ */
+export const handleUpdateMetricSelection = async (request: any, reply: any) => {
+  const { id } = request.params
+  const metrics = validateMetricSelection((request.body ?? {}).metrics)
+  if (!metrics) {
+    reply.code(400).send({ message: 'metrics must be an array of valid metric keys' })
+    return
+  }
+
+  const db = getDb()
+  try {
+    const existing = await db.get('SELECT id FROM devices WHERE id = ?', [id])
+    if (!existing) {
+      reply.code(404).send({ message: 'Device not found' })
+      return
+    }
+
+    const deselected = (Object.keys(METRIC_COLUMNS) as MetricKey[]).filter((key) => !metrics.includes(key))
+    const columnsToClear = [...new Set(deselected.flatMap((key) => METRIC_COLUMNS[key]))]
+
+    const changed = await withTransaction(async (tx) => {
+      const result = await tx.run('UPDATE devices SET metric_selection = ? WHERE id = ?', [JSON.stringify(metrics), id])
+      if (result.changes === 0) return false
+      if (columnsToClear.length > 0) {
+        await tx.run(
+          `UPDATE device_metrics_latest SET ${columnsToClear.map((column) => `${column} = NULL`).join(', ')} WHERE device_id = ?`,
+          [id]
+        )
+      }
+      return true
+    })
+    if (!changed) {
+      reply.code(404).send({ message: 'Device not found' })
+      return
+    }
+
+    try {
+      await broadcastState()
+    } catch (broadcastError) {
+      console.error('Error broadcasting state after metric selection update:', broadcastError)
+    }
+
+    reply.send({ metrics })
+  } catch (error) {
+    console.error('Error updating metric selection:', error)
     reply.code(500).send({ message: 'Internal server error' })
   }
 }

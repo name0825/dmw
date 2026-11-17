@@ -1,3 +1,4 @@
+import { METRIC_OPTIONS } from './constants'
 import type { AlertItem, Device, DeviceHistoryEntry } from './types'
 
 export const getApiBaseUrl = () => (
@@ -75,6 +76,9 @@ export const normalizeDevices = (devices: Device[]) => devices.map((device) => (
   cpu_usage: Number(device.cpu_usage ?? 0),
   memory_usage: Number(device.memory_usage ?? 0),
   disk_usage: Number(device.disk_usage ?? 0),
+  metric_selection: Array.isArray(device.metric_selection)
+    ? device.metric_selection
+    : METRIC_OPTIONS.map((option) => option.key),
 }))
 
 /**

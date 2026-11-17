@@ -143,7 +143,7 @@ test('an old unpair racing a re-pair cannot revoke the replacement key', async (
   const newHeartbeatReply = reply()
   await handleHeartbeat(request(newKey, { memoryUsage: 30 }), newHeartbeatReply)
   assert.equal(newHeartbeatReply.status, 200)
-  assert.deepEqual(newHeartbeatReply.body, { status: 'ok' })
+  assert.equal((newHeartbeatReply.body as { status: string }).status, 'ok')
 
   const oldHeartbeatReply = reply()
   await handleHeartbeat(request(oldKey), oldHeartbeatReply)

@@ -2,6 +2,7 @@ import { WebSocketServer, WebSocket } from 'ws'
 import { BIND_HOST, WS_PORT } from '../config.js'
 import { getDb } from '../database/index.js'
 import { isValidJwtToken, verifyTokenAndVersion } from '../auth.js'
+import { serializeDeviceRow } from '../metricSelection.js'
 
 /**
  * WebSocket service module
@@ -53,14 +54,17 @@ export const sendStateToClient = async (
  */
 export const broadcastState = async () => {
   const db = getDb()
-  const devices = await db.all(
+  const rows = await db.all(
     // agent_key_hash / agent_key_hint 는 브라우저로 나가면 안 되므로 컬럼을 명시한다.
     `SELECT d.id, d.name, d.mac_address, d.ip_address, d.agent_paired, d.paired_at,
             d.last_seen, d.status, d.agent_version, d.created_at, d.updated_at,
             d.ssh_username, d.ssh_port, d.ssh_host_key,
-            m.cpu_usage, m.memory_usage, m.disk_usage
+            d.metric_selection,
+            m.cpu_usage, m.memory_usage, m.disk_usage,
+            m.cpu_temp, m.memory_temp, m.cpu_clock, m.memory_clock, m.disks_json
      FROM devices d LEFT JOIN device_metrics_latest m ON m.device_id = d.id ORDER BY d.id DESC`,
   )
+  const devices = rows.map(serializeDeviceRow)
 
   if (wss && wss.clients.size > 0) {
     const payload = JSON.stringify({ type: 'devices-updated', devices })

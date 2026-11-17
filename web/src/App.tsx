@@ -5,7 +5,8 @@ import SshPanel from './SshPanel'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceSocket } from './hooks/useDeviceSocket'
 import { useDevices } from './hooks/useDevices'
-import type { Device, DeviceHistoryEntry, PairingInfo } from './types'
+import { METRIC_OPTIONS } from './constants'
+import type { Device, DeviceHistoryEntry, MetricKey, PairingInfo } from './types'
 
 const ALERT_PREVIEW_COUNT = 5
 
@@ -37,7 +38,17 @@ const parseIp = (ip: string | undefined): number[] | null => {
 
 const liveUsage = (device: Device, value: number | undefined) => (device.status === 'ONLINE' ? (value ?? 0) : 0)
 
-const compareName = (a: Device, b: Device) => a.name.localeCompare(b.name, 'ko') || a.id - b.id
+const ALL_METRIC_KEYS: MetricKey[] = METRIC_OPTIONS.map((option) => option.key)
+
+const isSelected = (device: Device, key: MetricKey) => (device.metric_selection ?? ALL_METRIC_KEYS).includes(key)
+
+const hasValue = (value: number | null | undefined): value is number => typeof value === 'number' && Number.isFinite(value)
+
+const formatTemp = (value: number) => `${Math.round(value)}°C`
+
+const formatCpuClock = (mhz: number) => (mhz >= 1000 ? `${(mhz / 1000).toFixed(1)} GHz` : `${Math.round(mhz)} MHz`)
+
+const compareName =(a: Device, b: Device) => a.name.localeCompare(b.name, 'ko') || a.id - b.id
 
 const compareDevices = (sortKey: DeviceSortKey) => (a: Device, b: Device): number => {
   switch (sortKey) {
@@ -82,6 +93,7 @@ export default function App() {
   const [pairingInfo, setPairingInfo] = useState<PairingInfo | null>(null)
   const [sshOpenId, setSshOpenId] = useState<number | null>(null)
   const [alertsExpanded, setAlertsExpanded] = useState(false)
+  const [metricOpenId, setMetricOpenId] = useState<number | null>(null)
 
   const apiBase = getApiBaseUrl()
   const wsBase = getWebSocketBaseUrl()
@@ -114,6 +126,7 @@ export default function App() {
     wakeDevice,
     pendingIds,
     loadHistory,
+    saveMetricSelection,
     summary,
   } = useDevices(apiBase, token, authedRequest, setMessage)
 
@@ -198,6 +211,83 @@ export default function App() {
     } catch {
       setMessage('클립보드 복사에 실패했습니다. 코드를 직접 입력해 주세요.')
     }
+  }
+
+  /**
+   * Toggle one metric in a device's collection selection and persist it.
+   * @param {Device} device - Target device.
+   * @param {MetricKey} key - Metric to toggle.
+   */
+  const toggleMetric = (device: Device, key: MetricKey) => {
+    const current = device.metric_selection ?? ALL_METRIC_KEYS
+    const next = current.includes(key) ? current.filter((item) => item !== key) : [...current, key]
+    void saveMetricSelection(device.id, ALL_METRIC_KEYS.filter((item) => next.includes(item)))
+  }
+
+  /**
+   * Render the usage meters and temperature/clock chips for the metrics selected on a device.
+   * @param {Device} device - Device to render.
+   * @returns {JSX.Element} Metric block.
+   */
+  const renderMetrics = (device: Device) => {
+    const online = device.status === 'ONLINE'
+    const disks = online ? (device.disks ?? []) : []
+    const usageDisks = disks.filter((disk) => hasValue(disk.usage))
+    const tempDisks = disks.filter((disk) => hasValue(disk.tempC))
+    const showDiskTemp = isSelected(device, 'disk_temp')
+
+    const chips: string[] = []
+    if (online) {
+      if (isSelected(device, 'cpu_temp') && hasValue(device.cpu_temp)) chips.push(`CPU ${formatTemp(device.cpu_temp)}`)
+      if (isSelected(device, 'memory_temp') && hasValue(device.memory_temp)) chips.push(`MEM ${formatTemp(device.memory_temp)}`)
+      if (isSelected(device, 'cpu_clock') && hasValue(device.cpu_clock)) chips.push(`CPU ${formatCpuClock(device.cpu_clock)}`)
+      if (isSelected(device, 'memory_clock') && hasValue(device.memory_clock)) chips.push(`MEM ${Math.round(device.memory_clock)} MT/s`)
+    }
+
+    return (
+      <div className="metric-stack">
+        {isSelected(device, 'cpu_usage') && (
+          <div>
+            <label>CPU</label>
+            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.cpu_usage), 100)}%` }} /></div>
+            <small>{liveUsage(device, device.cpu_usage)}%</small>
+          </div>
+        )}
+        {isSelected(device, 'memory_usage') && (
+          <div>
+            <label>MEM</label>
+            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.memory_usage), 100)}%` }} /></div>
+            <small>{liveUsage(device, device.memory_usage)}%</small>
+          </div>
+        )}
+        {isSelected(device, 'disk_usage') && (usageDisks.length > 0 ? (
+          usageDisks.map((disk) => (
+            <div key={disk.name}>
+              <label>DISK {disk.name}</label>
+              <div className="meter"><span style={{ width: `${Math.min(disk.usage ?? 0, 100)}%` }} /></div>
+              <small>{disk.usage}%{showDiskTemp && hasValue(disk.tempC) ? ` · ${formatTemp(disk.tempC)}` : ''}</small>
+            </div>
+          ))
+        ) : (
+          <div>
+            <label>DISK</label>
+            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
+            <small>{liveUsage(device, device.disk_usage)}%</small>
+          </div>
+        ))}
+        {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.map((disk) => (
+          <div key={disk.name}>
+            <label>DISK {disk.name}</label>
+            <small>{formatTemp(disk.tempC as number)}</small>
+          </div>
+        ))}
+        {chips.length > 0 && (
+          <div className="metric-chips">
+            {chips.map((chip) => <span key={chip} className="metric-chip">{chip}</span>)}
+          </div>
+        )}
+      </div>
+    )
   }
 
   /**
@@ -374,23 +464,7 @@ export default function App() {
                       <h3>{device.name}</h3>
                       <p>{device.ip_address} · {device.mac_address}</p>
                       <small>{device.last_seen ? `Last seen: ${new Date(device.last_seen).toLocaleString()}` : 'Heartbeat 없음'}</small>
-                      <div className="metric-stack">
-                        <div>
-                          <label>CPU</label>
-                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.cpu_usage), 100)}%` }} /></div>
-                          <small>{liveUsage(device, device.cpu_usage)}%</small>
-                        </div>
-                        <div>
-                          <label>MEM</label>
-                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.memory_usage), 100)}%` }} /></div>
-                          <small>{liveUsage(device, device.memory_usage)}%</small>
-                        </div>
-                        <div>
-                          <label>DISK</label>
-                          <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
-                          <small>{liveUsage(device, device.disk_usage)}%</small>
-                        </div>
-                      </div>
+                      {renderMetrics(device)}
                     </div>
                     <div className="device-meta">
                       <span className={`badge ${String(device.status).toLowerCase()}`}>{device.status}</span>
@@ -403,33 +477,55 @@ export default function App() {
                       <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>Wake</button>
                       <button className="secondary" onClick={() => loadHistory(device.id)}>History</button>
                       <button className="secondary" onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}>SSH</button>
+                      <button className="secondary" onClick={() => setMetricOpenId(metricOpenId === device.id ? null : device.id)}>수집 항목</button>
                       {device.agent_paired && (
                         <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>
                       )}
                     </div>
+                    {metricOpenId === device.id && (
+                      <div className="metric-select">
+                        {METRIC_OPTIONS.map((option) => (
+                          <label key={option.key}>
+                            <input
+                              type="checkbox"
+                              checked={isSelected(device, option.key)}
+                              disabled={pendingIds.has(device.id)}
+                              onChange={() => toggleMetric(device, option.key)}
+                            />
+                            {option.label}
+                          </label>
+                        ))}
+                      </div>
+                    )}
                     {historyByDevice[device.id]?.length ? (
                       <div className="history-panel">
                         <strong>최근 메트릭</strong>
                         <div className="chart-row">
-                          <div className="chart-box cpu">
-                            <span>CPU</span>
-                            {renderTrendChart(historyByDevice[device.id], 'cpu_usage')}
-                          </div>
-                          <div className="chart-box mem">
-                            <span>MEM</span>
-                            {renderTrendChart(historyByDevice[device.id], 'memory_usage')}
-                          </div>
-                          <div className="chart-box disk">
-                            <span>DISK</span>
-                            {renderTrendChart(historyByDevice[device.id], 'disk_usage')}
-                          </div>
+                          {isSelected(device, 'cpu_usage') && (
+                            <div className="chart-box cpu">
+                              <span>CPU</span>
+                              {renderTrendChart(historyByDevice[device.id], 'cpu_usage')}
+                            </div>
+                          )}
+                          {isSelected(device, 'memory_usage') && (
+                            <div className="chart-box mem">
+                              <span>MEM</span>
+                              {renderTrendChart(historyByDevice[device.id], 'memory_usage')}
+                            </div>
+                          )}
+                          {isSelected(device, 'disk_usage') && (
+                            <div className="chart-box disk">
+                              <span>DISK</span>
+                              {renderTrendChart(historyByDevice[device.id], 'disk_usage')}
+                            </div>
+                          )}
                         </div>
                         {historyByDevice[device.id].slice(0, 5).map((entry) => (
                           <div key={`${device.id}-${entry.timestamp}`} className="history-item">
                             <span>{new Date(entry.timestamp).toLocaleTimeString()}</span>
-                            <small>CPU {entry.cpu_usage ?? 0}%</small>
-                            <small>MEM {entry.memory_usage ?? 0}%</small>
-                            <small>DISK {entry.disk_usage ?? 0}%</small>
+                            {isSelected(device, 'cpu_usage') && <small>CPU {entry.cpu_usage ?? 0}%</small>}
+                            {isSelected(device, 'memory_usage') && <small>MEM {entry.memory_usage ?? 0}%</small>}
+                            {isSelected(device, 'disk_usage') && <small>DISK {entry.disk_usage ?? 0}%</small>}
                           </div>
                         ))}
                       </div>

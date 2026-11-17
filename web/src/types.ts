@@ -1,5 +1,21 @@
 type DeviceStatus = 'ONLINE' | 'OFFLINE' | 'NOT_PAIRED' | 'WAKE_TIMEOUT' | string
 
+export type MetricKey =
+  | 'cpu_usage'
+  | 'memory_usage'
+  | 'disk_usage'
+  | 'cpu_temp'
+  | 'memory_temp'
+  | 'disk_temp'
+  | 'cpu_clock'
+  | 'memory_clock'
+
+export type DiskMetric = {
+  name: string
+  usage?: number
+  tempC?: number
+}
+
 export type Device = {
   id: number
   name: string
@@ -15,6 +31,12 @@ export type Device = {
   cpu_usage?: number
   memory_usage?: number
   disk_usage?: number
+  metric_selection?: MetricKey[]
+  cpu_temp?: number | null
+  memory_temp?: number | null
+  cpu_clock?: number | null
+  memory_clock?: number | null
+  disks?: DiskMetric[] | null
 }
 
 export type DeviceForm = {

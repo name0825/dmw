@@ -14,7 +14,9 @@ const useStub = () => {
   return false
 }
 
-export const collectMetrics = () =>
+export { METRIC_KEYS, parseCollectSelection } from './select.js'
+
+export const collectMetrics = (select) =>
   useStub()
     ? Promise.resolve({ cpuUsage: 0, memoryUsage: 0, diskUsage: 0 })
-    : os.platform() === 'win32' ? collectWindowsMetrics() : collectUnixMetrics()
+    : os.platform() === 'win32' ? collectWindowsMetrics({ select }) : collectUnixMetrics({ select })

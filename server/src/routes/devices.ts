@@ -34,7 +34,11 @@ export const registerDeviceRoutes = (app: any) => {
     return await deviceService.handleUpdateDevice(request, reply)
   })
 
-  app.delete('/devices/:id', async (request: any, reply: any) => {
+  app.put('/devices/:id/metric-selection', async (request: any, reply: any) => {
+    return await deviceService.handleUpdateMetricSelection(request, reply)
+  })
+
+  app.delete('/devices/:id',async (request: any, reply: any) => {
     return await deviceService.handleDeleteDevice(request, reply)
   })
 

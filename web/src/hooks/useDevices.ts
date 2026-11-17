@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { mapHistory, normalizeAlerts, normalizeDevices } from '../api'
 import { IPV4_RE, MAC_RE } from '../constants'
-import type { AlertItem, Device, DeviceForm, DeviceHistoryEntry } from '../types'
+import type { AlertItem, Device, DeviceForm, DeviceHistoryEntry, MetricKey } from '../types'
 
 /**
  * Validate a MAC address in canonical `AA:BB:CC:DD:EE:FF` form.
@@ -202,6 +202,37 @@ export const useDevices = (
   }
 
   /**
+   * Save which metrics the agent of a device should collect and display.
+   * @param {number} id - Device identifier.
+   * @param {MetricKey[]} metrics - Selected metric keys.
+   */
+  const saveMetricSelection = async (id: number, metrics: MetricKey[]) => {
+    if (pendingIdsRef.current.has(id)) return
+    pendingIdsRef.current.add(id)
+    setPendingIds(new Set(pendingIdsRef.current))
+
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices/${id}/metric-selection`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ metrics }),
+      })
+
+      if (!res.ok) {
+        setMessage(data?.message || '수집 항목 저장 실패')
+        return
+      }
+
+      await loadDevices()
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      pendingIdsRef.current.delete(id)
+      setPendingIds(new Set(pendingIdsRef.current))
+    }
+  }
+
+  /**
    * Load a device’s recent metric history for chart display.
    * @param {number} deviceId - Device identifier.
    */
@@ -244,6 +275,7 @@ export const useDevices = (
     wakeDevice,
     pendingIds,
     loadHistory,
+    saveMetricSelection,
     summary,
   }
 }

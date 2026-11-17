@@ -28,7 +28,8 @@ export const initDb = async (db: Database): Promise<void> => {
       agent_version TEXT,
       status TEXT NOT NULL DEFAULT 'NOT_PAIRED',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      metric_selection TEXT
     );
 
     CREATE TABLE IF NOT EXISTS pairing_codes (
@@ -52,6 +53,11 @@ export const initDb = async (db: Database): Promise<void> => {
       cpu_usage REAL,
       memory_usage REAL,
       disk_usage REAL,
+      cpu_temp REAL,
+      memory_temp REAL,
+      cpu_clock REAL,
+      memory_clock REAL,
+      disks_json TEXT,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
@@ -76,6 +82,11 @@ export const initDb = async (db: Database): Promise<void> => {
       cpu_usage REAL,
       memory_usage REAL,
       disk_usage REAL,
+      cpu_temp REAL,
+      memory_temp REAL,
+      cpu_clock REAL,
+      memory_clock REAL,
+      disks_json TEXT,
       FOREIGN KEY(device_id) REFERENCES devices(id) ON DELETE CASCADE
     );
 
@@ -171,6 +182,25 @@ const migrateSchema = async (db: Database): Promise<void> => {
   }
   if (!deviceColumns.some((column) => column.name === 'ssh_host_ip')) {
     await db.exec('ALTER TABLE devices ADD COLUMN ssh_host_ip TEXT')
+  }
+  if (!deviceColumns.some((column) => column.name === 'metric_selection')) {
+    await db.exec('ALTER TABLE devices ADD COLUMN metric_selection TEXT')
+  }
+
+  const extraMetricColumns: [string, string][] = [
+    ['cpu_temp', 'REAL'],
+    ['memory_temp', 'REAL'],
+    ['cpu_clock', 'REAL'],
+    ['memory_clock', 'REAL'],
+    ['disks_json', 'TEXT'],
+  ]
+  for (const table of ['device_metrics_latest', 'device_metrics_history']) {
+    const metricColumns = await db.all<{ name: string }[]>(`PRAGMA table_info(${table})`)
+    for (const [column, type] of extraMetricColumns) {
+      if (!metricColumns.some((existing) => existing.name === column)) {
+        await db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`)
+      }
+    }
   }
 
   // 순서 주의: 테이블을 재생성하면 인덱스도 함께 사라지므로,
