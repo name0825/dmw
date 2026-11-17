@@ -348,7 +348,7 @@ export default function App() {
             usageDisks.map((disk) => (
               <div className="metric-item" key={disk.name}>
                 <div className="metric-line">
-                  <label>{disk.kind === 'filesystem' ? 'FS' : 'DISK'} {disk.name}</label>
+                  <label className={disk.kind === 'filesystem' ? 'filesystem-label' : undefined}>{disk.kind === 'filesystem' ? 'FS' : 'DISK'} {disk.name}</label>
                   <small>{disk.usage}%{showDiskTemp && hasValue(disk.tempC) ? ` · ${formatTemp(disk.tempC)}` : ''}</small>
                 </div>
                 <div className="meter"><span className={meterLevel(disk.usage ?? 0)} style={{ width: `${Math.min(disk.usage ?? 0, 100)}%` }} /></div>
@@ -363,15 +363,6 @@ export default function App() {
               <div className="meter"><span className={meterLevel(liveUsage(device, device.disk_usage))} style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
             </div>
           ) : null)}
-          {(isSelected(device, 'disk_usage') || showDiskTemp) && physicalDisks.map((disk) => (
-            <div className="metric-item" key={`physical:${disk.name}`} title="물리 디스크입니다. 사용률은 FS 항목에 파일시스템별로 표시됩니다.">
-              <div className="metric-line">
-                <label>DISK {disk.name}</label>
-                <small>{showDiskTemp ? (hasValue(disk.tempC) ? formatTemp(disk.tempC) : '온도 N/A') : '사용률 N/A'}</small>
-              </div>
-              {disk.sizeBytes !== undefined && <small>{(disk.sizeBytes / (disk.sizeBytes >= 1e12 ? 1e12 : 1e9)).toLocaleString(undefined, { maximumFractionDigits: 2 })} {disk.sizeBytes >= 1e12 ? 'TB' : 'GB'}</small>}
-            </div>
-          ))}
           {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.filter((disk) => disk.kind !== 'physical').map((disk) => (
             <div className="metric-item" key={disk.name}>
               <div className="metric-line">
@@ -381,6 +372,18 @@ export default function App() {
             </div>
           ))}
         </div>
+        {(isSelected(device, 'disk_usage') || showDiskTemp) && physicalDisks.length > 0 && (
+          <div className="physical-disks" title="사용률은 FS 항목에 파일시스템별로 표시됩니다.">
+            <div className="physical-disks-heading">물리 디스크</div>
+            {physicalDisks.map((disk) => (
+              <div className="physical-disk" key={`physical:${disk.name}`}>
+                <span className="physical-disk-name">{disk.name}</span>
+                {disk.sizeBytes !== undefined && <span className="physical-disk-size">{(disk.sizeBytes / (disk.sizeBytes >= 1e12 ? 1e12 : 1e9)).toLocaleString(undefined, { maximumFractionDigits: 2 })} {disk.sizeBytes >= 1e12 ? 'TB' : 'GB'}</span>}
+                {showDiskTemp && hasValue(disk.tempC) && <span className="physical-disk-temp">{formatTemp(disk.tempC)}</span>}
+              </div>
+            ))}
+          </div>
+        )}
         {chips.length > 0 && (
           <div className="metric-chips">
             {chips.map((chip) => <span key={chip} className="metric-chip">{chip}</span>)}
