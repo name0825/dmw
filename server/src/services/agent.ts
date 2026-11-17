@@ -9,7 +9,7 @@ import { getDb, withTransaction } from '../database/index.js'
 import { broadcastState } from './ws.js'
 import { isValidIp, isValidMac, normalizeIp, normalizeMac, normalizeUsage } from '../utils/validation.js'
 import { generateApiKey } from '../utils/crypto.js'
-import { STATUS_NOT_PAIRED, STATUS_ONLINE, STATUS_OFFLINE } from '../config/constants.js'
+import { AGENT_UPDATE_STALE_MS, AGENT_UPDATE_TIMEOUT_MESSAGE, STATUS_NOT_PAIRED, STATUS_ONLINE, STATUS_OFFLINE } from '../config/constants.js'
 import { applySelection, parseMetricSelection, sanitizeExtraMetrics, type HeartbeatMetrics, type MetricKey } from '../metricSelection.js'
 
 // Length of the first 12 characters of API key (stored as hint in DB)
@@ -329,7 +329,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
     // status is still WAKE_TIMEOUT) is unaffected.
     let updateRequested = false
     const heartbeatApplied = await withTransaction(async (tx) => {
-      const before = await tx.get('SELECT agent_version, update_state FROM devices WHERE id = ?', [deviceId])
+      const before = await tx.get('SELECT agent_version, update_state, update_message, update_state_at FROM devices WHERE id = ?', [deviceId])
       const result = await tx.run(
         'UPDATE devices SET last_seen = ?, status = ?, updated_at = ?, agent_version = COALESCE(?, agent_version) WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
         [now, STATUS_ONLINE, now, agentVersion, deviceId, device.agent_key_hash, agentKey.substring(0, API_KEY_HINT_LEN)]
@@ -338,22 +338,28 @@ export const handleHeartbeat = async (request: any, reply: any) => {
 
       const updateState: string | null = before?.update_state ?? null
       const updateInProgress = updateState === 'delivered' || updateState === 'installing'
-      if (updateInProgress && agentVersion !== null && agentVersion !== before?.agent_version) {
+      const timedOut = updateState === 'failed' && before?.update_message === AGENT_UPDATE_TIMEOUT_MESSAGE
+      if ((updateInProgress || timedOut) && agentVersion !== null && agentVersion !== before?.agent_version) {
         await tx.run(
-          "UPDATE devices SET update_state = 'updated', update_message = NULL, update_state_at = ? WHERE id = ? AND update_state IN ('delivered', 'installing')",
-          [now, deviceId]
+          "UPDATE devices SET update_state = 'updated', update_message = NULL, update_state_at = ? WHERE id = ? AND (update_state IN ('delivered', 'installing') OR (update_state = 'failed' AND update_message = ?))",
+          [now, deviceId, AGENT_UPDATE_TIMEOUT_MESSAGE]
         )
       } else if (updateInProgress && updateReport) {
         await tx.run(
           "UPDATE devices SET update_state = ?, update_message = ?, update_state_at = ? WHERE id = ? AND update_state IN ('delivered', 'installing')",
           [updateReport.state, updateReport.message, now, deviceId]
         )
-      } else if (updateState === 'requested') {
+      } else if (updateInProgress && !(Date.now() - Date.parse(before?.update_state_at) < AGENT_UPDATE_STALE_MS)) {
         await tx.run(
+          "UPDATE devices SET update_state = 'failed', update_message = ?, update_state_at = ? WHERE id = ? AND update_state IN ('delivered', 'installing')",
+          [AGENT_UPDATE_TIMEOUT_MESSAGE, now, deviceId]
+        )
+      } else if (updateState === 'requested') {
+        const delivered = await tx.run(
           "UPDATE devices SET update_state = 'delivered', update_message = NULL, update_state_at = ? WHERE id = ? AND update_state = 'requested'",
           [now, deviceId]
         )
-        updateRequested = true
+        updateRequested = delivered.changes === 1
       }
 
       const current = await tx.get('SELECT metric_selection FROM devices WHERE id = ?', [deviceId])

@@ -1,4 +1,5 @@
 import { DEVICE_WAKE_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
+import { requireAdmin } from '../middleware/auth.js'
 import { getLatestAgentRelease } from '../services/agentRelease.js'
 import * as deviceService from '../services/devices.js'
 
@@ -47,7 +48,7 @@ export const registerDeviceRoutes = (app: any) => {
     return await getLatestAgentRelease({ force: request.query?.refresh === '1' })
   })
 
-  app.post('/devices/:id/agent-update', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
+  app.post('/devices/:id/agent-update', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } }, preHandler: requireAdmin }, async (request: any, reply: any) => {
     return await deviceService.handleRequestAgentUpdate(request, reply)
   })
 

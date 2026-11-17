@@ -27,6 +27,12 @@ export const AGENT_PAIR_RATE_LIMIT_MAX = 5
  */
 export const AGENT_HEARTBEAT_RATE_LIMIT_MAX = 120
 
+/** Time after which a delivered or installing agent update with no progress is marked failed — 15 minutes. */
+export const AGENT_UPDATE_STALE_MS = 15 * 60 * 1000
+
+/** Message stored when an agent update is marked failed because the agent made no progress in time. */
+export const AGENT_UPDATE_TIMEOUT_MESSAGE = '에이전트가 응답하지 않아 업데이트 시간이 초과되었습니다'
+
 /** Default rate limit for agent unpair endpoints — 10 requests per minute. */
 export const AGENT_UNPAIR_RATE_LIMIT_MAX = 10
 

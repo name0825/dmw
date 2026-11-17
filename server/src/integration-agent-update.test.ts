@@ -12,6 +12,7 @@ process.env.DB_PATH = path.join(databaseDirectory, 'dmw.db')
 const { initPool, closePool, getDb } = await import('./database/index.js')
 const { API_KEY_HINT_LEN } = await import('./services/agent.js')
 const { ADMIN_EMAIL } = await import('./config.js')
+const { AGENT_UPDATE_TIMEOUT_MESSAGE } = await import('./config/constants.js')
 const { authMiddleware } = await import('./middleware/auth.js')
 const { isPublicRoute, createToken } = await import('./auth.js')
 const { registerAgentRoutes } = await import('./routes/agent.js')
@@ -181,6 +182,92 @@ test('an update can only be requested for an existing paired device by an authen
 
     const latest = await app.inject({ method: 'GET', url: '/agent-release/latest' })
     assert.equal(latest.statusCode, 401)
+  } finally {
+    await app.close()
+  }
+})
+
+test('a delivered or installing update with no progress for over 15 minutes becomes failed, a fresh one is unchanged', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'update-stale-key-1234567890'
+    const id = await seedDevice(apiKey)
+    const setState = (state: string, ageMs: number) =>
+      getDb().run('UPDATE devices SET update_state = ?, update_message = NULL, update_state_at = ? WHERE id = ?', [state, new Date(Date.now() - ageMs).toISOString(), id])
+
+    await setState('delivered', 60 * 1000)
+    await heartbeat(app, apiKey, { agentVersion: '1.0.0' })
+    assert.equal((await updateRow(id)).update_state, 'delivered')
+
+    await setState('delivered', 16 * 60 * 1000)
+    const response = await heartbeat(app, apiKey, { agentVersion: '1.0.0' })
+    assert.equal(response.statusCode, 200)
+    assert.equal('update' in response.json(), false)
+    const row = await updateRow(id)
+    assert.equal(row.update_state, 'failed')
+    assert.equal(row.update_message, '에이전트가 응답하지 않아 업데이트 시간이 초과되었습니다')
+
+    await setState('installing', 16 * 60 * 1000)
+    await heartbeat(app, apiKey, { agentVersion: '1.0.0' })
+    assert.equal((await updateRow(id)).update_state, 'failed')
+
+    await setState('installing', 16 * 60 * 1000)
+    await heartbeat(app, apiKey, { agentVersion: '1.1.0' })
+    assert.equal((await updateRow(id)).update_state, 'updated')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a timed-out update becomes updated when the new version reports, other failures stay failed', async () => {
+  const app = buildApp()
+  try {
+    const apiKey = 'update-timeout-recover-key-1234567890'
+    const id = await seedDevice(apiKey)
+    await getDb().run(
+      "UPDATE devices SET update_state = 'installing', update_message = NULL, update_state_at = ? WHERE id = ?",
+      [new Date(Date.now() - 16 * 60 * 1000).toISOString(), id],
+    )
+    await heartbeat(app, apiKey, { agentVersion: '1.0.0' })
+    const timedOut = await updateRow(id)
+    assert.equal(timedOut.update_state, 'failed')
+    assert.equal(timedOut.update_message, AGENT_UPDATE_TIMEOUT_MESSAGE)
+
+    await heartbeat(app, apiKey, { agentVersion: '1.1.0' })
+    const recovered = await updateRow(id)
+    assert.equal(recovered.update_state, 'updated')
+    assert.equal(recovered.update_message, null)
+
+    await getDb().run(
+      "UPDATE devices SET update_state = 'failed', update_message = 'GitHub HTTP 500', update_state_at = ? WHERE id = ?",
+      [new Date().toISOString(), id],
+    )
+    await heartbeat(app, apiKey, { agentVersion: '1.2.0' })
+    const other = await updateRow(id)
+    assert.equal(other.update_state, 'failed')
+    assert.equal(other.update_message, 'GitHub HTTP 500')
+  } finally {
+    await app.close()
+  }
+})
+
+test('a non-admin user cannot request an agent update', async () => {
+  const app = buildApp()
+  try {
+    const id = await seedDevice('update-nonadmin-key-1234567890')
+    const email = 'plain-user@example.com'
+    await getDb().run(
+      "INSERT OR IGNORE INTO users (email, password_hash, role, created_at) VALUES (?, 'unused-hash', 'user', ?)",
+      [email, new Date().toISOString()],
+    )
+    const user = await getDb().get('SELECT token_version FROM users WHERE email = ?', [email])
+    const response = await app.inject({
+      method: 'POST',
+      url: `/devices/${id}/agent-update`,
+      headers: { authorization: `Bearer ${createToken(email, user.token_version ?? 0)}` },
+    })
+    assert.equal(response.statusCode, 403)
+    assert.equal((await updateRow(id)).update_state, null)
   } finally {
     await app.close()
   }

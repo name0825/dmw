@@ -550,7 +550,7 @@ export default function App() {
                         {device.update_state && UPDATE_STATE_LABELS[device.update_state] && (
                           <span
                             className={`device-chip update-state ${device.update_state}`}
-                            title={device.update_message || undefined}
+                            title={[device.update_message, device.update_state_at && !Number.isNaN(Date.parse(device.update_state_at)) ? new Date(device.update_state_at).toLocaleString() : null].filter(Boolean).join(' · ') || undefined}
                           >{UPDATE_STATE_LABELS[device.update_state]}</span>
                         )}
                       </div>

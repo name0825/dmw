@@ -338,10 +338,8 @@ export const handleDeleteDevice = async (request: any, reply: any) => {
 }
 
 /**
- * Handles Wake-on-LAN request.
- * Sends a WOL packet to the device. A paired device then moves to WAKE_TIMEOUT
- * until its agent reports back; an unpaired one keeps its status because nothing
- * would ever clear the timeout.
+ * Handles an agent update request.
+ * Marks the device's update as requested; the paired agent receives it on its next heartbeat.
  */
 export const handleRequestAgentUpdate = async (request: any, reply: any) => {
   const deviceId = Number(request.params.id)
@@ -387,6 +385,12 @@ export const handleRequestAgentUpdate = async (request: any, reply: any) => {
   }
 }
 
+/**
+ * Handles Wake-on-LAN request.
+ * Sends a WOL packet to the device. A paired device then moves to WAKE_TIMEOUT
+ * until its agent reports back; an unpaired one keeps its status because nothing
+ * would ever clear the timeout.
+ */
 export const handleWakeDevice = async (request: any, reply: any) => {
   const { id } = request.params
   const db = getDb()

@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { SSH_COMMAND_MAX_LENGTH, SSH_CONNECT_TIMEOUT_MS, SSH_EXEC_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
 import { beginSshConfirmAttempt } from '../auth.js'
 import { getDb, withTransaction } from '../database/index.js'
+import { requireAdmin } from '../middleware/auth.js'
 import { FINGERPRINT_PATTERN, recordSshAudit, runCommand, ssh2Transport, SshError } from '../services/ssh.js'
 import type { SshAuditEntry } from '../services/ssh.js'
 import type { SshDeps } from '../services/ssh.js'
@@ -16,12 +17,6 @@ const MAX_PASSWORD_LENGTH = 256
 const DEFAULT_SSH_PORT = 22
 
 const rateLimit = { config: { rateLimit: { max: SSH_EXEC_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }
-
-const requireAdmin = async (request: any, reply: any) => {
-  if (request.user?.role !== 'admin') {
-    return reply.code(403).send({ message: 'Forbidden' })
-  }
-}
 
 const adminOnly = { preHandler: requireAdmin }
 const adminRateLimited = { ...rateLimit, preHandler: requireAdmin }
