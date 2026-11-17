@@ -97,10 +97,9 @@ const DF_OUTPUT = [
   '/dev/fuse           131072        16    131056       1% /etc/pve',
 ].join('\n')
 
-test('df parsing keeps real block devices, dedupes bind mounts and supports spaces in mounts', () => {
+test('df parsing on Linux keeps only the root filesystem', () => {
   assert.deepEqual(parseDfDisks(DF_OUTPUT, 'linux'), [
     { name: '/', source: '/dev/sda2', usage: 25 },
-    { name: '/mnt/my data', source: '/dev/sdb1', usage: 75 },
   ])
   assert.deepEqual(parseDfDisks('Filesystem 1024-blocks Used Available Capacity Mounted on\ntmpfs 1 1 0 100% /run', 'linux'), [])
 })
@@ -142,13 +141,14 @@ test('Linux physical inventory includes unmounted HDDs without inventing usage',
   assert.throws(() => parseLsblkDisks('invalid JSON'))
 })
 
-test('Linux collector retains 32 physical disks and 32 filesystems with measured aggregate usage', async (t) => {
+test('Linux collector retains physical disks and reports only root filesystem usage', async (t) => {
   const devices = Array.from({ length: 32 }, (_, i) => ({ name: `sd${i}`, type: 'disk', size: 1000000 }))
   const exec = () => { throw new Error('unexpected callback invocation') }
-  exec[promisify.custom] = async (command) => {
+  exec[promisify.custom] = async (command, args) => {
     if (command === 'lsblk') return { stdout: JSON.stringify({ blockdevices: devices }) }
     assert.equal(command, 'df')
-    return { stdout: ['Filesystem 1024-blocks Used Available Capacity Mounted on', ...devices.map((disk, i) => `/dev/${disk.name} 100 ${i + 1} ${99 - i} ${i + 1}% /mnt/${disk.name}`)].join('\n') }
+    assert.deepEqual(args, ['-P', '-k', '/'])
+    return { stdout: ['Filesystem 1024-blocks Used Available Capacity Mounted on', '/dev/sd0 100 25 75 25% /', '/dev/sd1 100 90 10 90% /boot/efi', '/dev/sd2 100 95 5 95% /mnt/data'].join('\n') }
   }
   const originalExecFile = childProcess.execFile
   childProcess.execFile = exec
@@ -158,10 +158,10 @@ test('Linux collector retains 32 physical disks and 32 filesystems with measured
   try {
     const { collectUnixMetrics } = await import('../src/metrics/unix.js?disk-limits')
     const metrics = await collectUnixMetrics({ select: ['disk_usage'] })
-    assert.equal(metrics.disks.length, 64)
+    assert.equal(metrics.disks.length, 33)
     assert.equal(metrics.disks.filter((disk) => disk.kind === 'physical').length, 32)
-    assert.equal(metrics.disks.filter((disk) => disk.kind === 'filesystem').length, 32)
-    assert.equal(metrics.diskUsage, 32)
+    assert.deepEqual(metrics.disks.filter((disk) => disk.kind === 'filesystem'), [{ name: '/', kind: 'filesystem', usage: 25 }])
+    assert.equal(metrics.diskUsage, 25)
     assert.ok(metrics.disks.filter((disk) => disk.kind === 'physical').every((disk) => disk.usage === undefined))
   } finally {
     childProcess.execFile = originalExecFile

@@ -107,6 +107,7 @@ export const parseDfDisks = (stdout, platform = os.platform()) => {
     const source = cols[0]
     const mount = cols.slice(5).join(' ')
     if (!source?.startsWith('/dev/') || source === '/dev/fuse' || source.startsWith('/dev/loop') || !mount || seen.has(source)) continue
+    if (platform === 'linux' && mount !== '/') continue
     if (platform === 'darwin' && (mount === '/' || (mount.startsWith('/System/Volumes/') && mount !== '/System/Volumes/Data'))) continue
     const size = Number(cols[1])
     const available = Number(cols[3])
@@ -119,7 +120,7 @@ export const parseDfDisks = (stdout, platform = os.platform()) => {
 
 const getDisks = async () => {
   try {
-    const { stdout } = await execFileAsync('df', ['-P', '-k'], { timeout: 10000 })
+    const { stdout } = await execFileAsync('df', os.platform() === 'linux' ? ['-P', '-k', '/'] : ['-P', '-k'], { timeout: 10000 })
     const disks = parseDfDisks(stdout).filter((disk) => {
       if (os.platform() !== 'linux') return true
       try { return fs.statSync(disk.source).isBlockDevice() } catch { return false }
