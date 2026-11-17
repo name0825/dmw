@@ -25,7 +25,7 @@ const HELP_TEXT = `dmw-agent - DMW 장치 관리 에이전트
   --enable-autostart     재부팅 후 사용자 로그인 시 자동실행 등록
   --disable-autostart    자동실행 해제
   --update               GitHub 최신 안정 릴리스 설치 후 종료
-  --no-update            이번 실행에서 자동 업데이트 확인 생략
+  --no-update            이번 실행에서 자동 업데이트 확인 생략 (웹의 업데이트 요청도 거부)
   -h, --help             도움말
 
 첫 페어링 성공 시 로그인 자동실행을 등록합니다. Node.js 설치 경로를 유지하세요.
@@ -75,6 +75,27 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
   let nextDelay = intervalMs
   let confirmed = false
   let collect
+  let pendingReport
+  let requestedTask
+  const runRequestedUpdate = async () => {
+    if (noUpdate) {
+      console.warn('--no-update로 실행 중이라 서버의 업데이트 요청을 거부합니다.')
+      pendingReport = { state: 'failed', message: '에이전트가 --no-update로 실행 중이라 업데이트를 거부했습니다' }
+      lastHeartbeat = 0
+      return
+    }
+    pendingReport = { state: 'installing' }
+    lastHeartbeat = 0
+    try {
+      await updateTask
+      if (!running) return
+      if (await checkForUpdate()) { console.log('업데이트 설치 완료. 새 버전으로 다시 시작합니다.'); process.exitCode = 75; running = false; return }
+      pendingReport = { state: 'up_to_date', message: '새 업데이트가 없습니다' }
+    } catch (error) {
+      pendingReport = { state: 'failed', message: String(error.message).slice(0, 200) }
+    }
+    lastHeartbeat = 0
+  }
   const stop = () => { running = false }
   process.once('SIGINT', stop)
   process.once('SIGTERM', stop)
@@ -95,8 +116,14 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
         try {
           const metrics = await collectMetrics(collect)
           if (loadCredentials()?.apiKey === credentials.apiKey) {
-            const response = await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics)
+            const sentReport = pendingReport
+            const response = await sendHeartbeat(credentials.serverUrl, credentials.apiKey, metrics, sentReport)
+            if (pendingReport === sentReport) pendingReport = undefined
             collect = parseCollectSelection(response) ?? collect
+            if (response?.update === true && !requestedTask) {
+              console.log('서버에서 업데이트를 요청했습니다.')
+              requestedTask = runRequestedUpdate().finally(() => { requestedTask = undefined })
+            }
             if (!confirmed) {
               confirmed = true
               try { confirmActiveVersion() } catch (confirmError) { console.warn(`[update] 활성 버전 확정 실패: ${confirmError.message}`) }
@@ -121,6 +148,7 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
       if (running) await sleep(1000)
     }
     await updateTask
+    await requestedTask
   } finally {
     process.removeListener('SIGINT', stop)
     process.removeListener('SIGTERM', stop)

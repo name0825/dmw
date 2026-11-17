@@ -12,6 +12,7 @@ import { autostartEntry, installLauncher } from '../src/autostart.js'
 import { parseArgs } from '../src/config.js'
 import { checkForUpdate, confirmActiveVersion, isNewerVersion, validateBundle } from '../src/update.js'
 import { acquireLock } from '../src/credentials.js'
+import { sendHeartbeat } from '../src/client.js'
 import { HttpError, requestJson } from '../src/http.js'
 import { computeBackoffDelay } from '../src/retry.js'
 
@@ -445,6 +446,30 @@ const startServer = async (handler) => {
   const address = server.address()
   return { server, url: `http://127.0.0.1:${address.port}` }
 }
+
+test('sendHeartbeat includes updateReport only when one is given', async () => {
+  const bodies = []
+  const { server, url } = await startServer((request, result) => {
+    let raw = ''
+    request.on('data', (chunk) => { raw += chunk })
+    request.on('end', () => {
+      bodies.push({ authorization: request.headers.authorization, body: JSON.parse(raw) })
+      result.writeHead(200, { 'Content-Type': 'application/json' })
+      result.end(JSON.stringify({ status: 'ok', update: true }))
+    })
+  })
+  try {
+    const first = await sendHeartbeat(url, 'key', { cpuUsage: 1 })
+    assert.equal(first.update, true)
+    await sendHeartbeat(url, 'key', { cpuUsage: 1 }, { state: 'failed', message: 'GitHub HTTP 500' })
+    assert.equal('updateReport' in bodies[0].body, false)
+    assert.equal(bodies[0].body.cpuUsage, 1)
+    assert.equal(bodies[0].authorization, 'Bearer key')
+    assert.deepEqual(bodies[1].body.updateReport, { state: 'failed', message: 'GitHub HTTP 500' })
+  } finally {
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
 
 test('requestJson throws HttpError with the response status for a non-JSON error body', async () => {
   const { server, url } = await startServer((request, result) => {

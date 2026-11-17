@@ -60,6 +60,7 @@ export const broadcastState = async () => {
             d.last_seen, d.status, d.agent_version, d.created_at, d.updated_at,
             d.ssh_username, d.ssh_port, d.ssh_host_key,
             d.metric_selection,
+            d.update_state, d.update_message, d.update_state_at,
             m.cpu_usage, m.memory_usage, m.disk_usage,
             m.cpu_temp, m.memory_temp, m.cpu_clock, m.memory_clock, m.disks_json
      FROM devices d LEFT JOIN device_metrics_latest m ON m.device_id = d.id ORDER BY d.id DESC`,

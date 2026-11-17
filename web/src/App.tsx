@@ -4,6 +4,7 @@ import { getApiBaseUrl, getWebSocketBaseUrl } from './api'
 import SshPanel from './SshPanel'
 import { useAuth } from './hooks/useAuth'
 import { useDeviceSocket } from './hooks/useDeviceSocket'
+import { useAgentRelease } from './hooks/useAgentRelease'
 import { useDevices } from './hooks/useDevices'
 import { METRIC_OPTIONS } from './constants'
 import type { Device, DeviceHistoryEntry, MetricKey, PairingInfo } from './types'
@@ -21,6 +22,24 @@ const DEVICE_SORT_OPTIONS: { value: DeviceSortKey; label: string }[] = [
   { value: 'cpu', label: 'CPU 사용량' },
   { value: 'last_seen', label: '최근 접속' },
 ]
+
+const UPDATE_STATE_LABELS: Record<string, string> = {
+  requested: '업데이트 요청됨',
+  delivered: '전달됨',
+  installing: '설치 중',
+  updated: '업데이트 완료',
+  up_to_date: '최신 버전',
+  failed: '업데이트 실패',
+}
+
+const isNewerVersion = (candidate: string, current: string) => {
+  const a = candidate.split('.').map(Number)
+  const b = current.split('.').map(Number)
+  for (let i = 0; i < 3; i += 1) {
+    if ((a[i] || 0) !== (b[i] || 0)) return (a[i] || 0) > (b[i] || 0)
+  }
+  return false
+}
 
 const loadDeviceSort = (): DeviceSortKey => {
   try {
@@ -141,11 +160,15 @@ export default function App() {
     deleteDevice,
     editDevice,
     wakeDevice,
+    requestAgentUpdate,
     pendingIds,
     loadHistory,
     saveMetricSelection,
     summary,
   } = useDevices(apiBase, token, authedRequest, setMessage)
+
+  const { release, checking, checkRelease } = useAgentRelease(apiBase, token, authedRequest, setMessage)
+  const latestVersion = release?.version ?? null
 
   resetDevicesRef.current = resetDevices
 
@@ -193,6 +216,12 @@ export default function App() {
 
   const confirmDelete = (device: Device) => {
     if (window.confirm(`'${device.name}' 디바이스를 삭제할까요?`)) void deleteDevice(device.id)
+  }
+
+  const confirmAgentUpdate = (device: Device) => {
+    if (window.confirm(`'${device.name}' 에이전트를 최신 버전으로 업데이트할까요? 업데이트 후 에이전트가 다시 시작됩니다.`)) {
+      void requestAgentUpdate(device.id)
+    }
   }
 
   /**
@@ -480,6 +509,14 @@ export default function App() {
           <section className="card status-panel">
             <div className="panel-header">
               <h2>디바이스 상태</h2>
+              <div className="release-check">
+                {release && (
+                  <span className="release-info" title={release.error || undefined}>
+                    {latestVersion ? `최신 에이전트 v${latestVersion}` : '최신 버전 확인 실패'}
+                  </span>
+                )}
+                <button className="secondary" onClick={() => void checkRelease(true)} disabled={checking}>업데이트 확인</button>
+              </div>
               <label className="sort-control">
                 <span>정렬</span>
                 <select value={deviceSort} onChange={(e) => changeDeviceSort(e.target.value as DeviceSortKey)}>
@@ -507,6 +544,15 @@ export default function App() {
                         <span className={`badge ${String(device.status).toLowerCase()}`}>{statusLabel(device.status)}</span>
                         {device.status !== 'NOT_PAIRED' && <span className="device-chip">{device.agent_paired ? '페어링됨' : '미페어링'}</span>}
                         {device.agent_version && <span className="device-chip">v{device.agent_version}</span>}
+                        {device.agent_version && latestVersion && isNewerVersion(latestVersion, device.agent_version) && (
+                          <span className="device-chip update-available">업데이트 가능 → v{latestVersion}</span>
+                        )}
+                        {device.update_state && UPDATE_STATE_LABELS[device.update_state] && (
+                          <span
+                            className={`device-chip update-state ${device.update_state}`}
+                            title={device.update_message || undefined}
+                          >{UPDATE_STATE_LABELS[device.update_state]}</span>
+                        )}
                       </div>
                       <div className="device-actions">
                         <button
@@ -547,6 +593,16 @@ export default function App() {
                                     void generateRepairingCode(device)
                                   }}
                                 >재페어링 코드</button>
+                              )}
+                              {!!device.agent_paired && (
+                                <button
+                                  role="menuitem"
+                                  disabled={device.status !== 'ONLINE' || pendingIds.has(device.id)}
+                                  onClick={() => {
+                                    setMenuOpenId(null)
+                                    confirmAgentUpdate(device)
+                                  }}
+                                >에이전트 업데이트</button>
                               )}
                               <button
                                 role="menuitem"

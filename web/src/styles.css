@@ -358,6 +358,34 @@ select {
   background: rgba(148, 163, 184, 0.12);
 }
 
+.device-chip.update-available,
+.device-chip.update-state.requested,
+.device-chip.update-state.delivered,
+.device-chip.update-state.installing {
+  color: #fcd34d;
+  background: rgba(250, 204, 21, 0.16);
+}
+
+.device-chip.update-state.updated,
+.device-chip.update-state.up_to_date {
+  color: #86efac;
+  background: rgba(34, 197, 94, 0.18);
+}
+
+.device-chip.update-state.failed {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.18);
+}
+
+.release-check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-left: auto;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
 .device-sub {
   margin: 0;
   font-size: 0.8rem;

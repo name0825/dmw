@@ -202,6 +202,33 @@ export const useDevices = (
   }
 
   /**
+   * Ask the agent of a paired device to install the latest release.
+   * @param {number} id - Device identifier.
+   */
+  const requestAgentUpdate = async (id: number) => {
+    if (pendingIdsRef.current.has(id)) return
+    pendingIdsRef.current.add(id)
+    setPendingIds(new Set(pendingIdsRef.current))
+
+    try {
+      const { res, data } = await authedRequest(`${apiBase}/devices/${id}/agent-update`, { method: 'POST' })
+
+      if (!res.ok) {
+        setMessage(data?.message || '에이전트 업데이트 요청 실패')
+        return
+      }
+
+      setMessage('에이전트 업데이트를 요청했습니다.')
+      await loadDevices()
+    } catch {
+      setMessage('네트워크 오류로 요청에 실패했습니다.')
+    } finally {
+      pendingIdsRef.current.delete(id)
+      setPendingIds(new Set(pendingIdsRef.current))
+    }
+  }
+
+  /**
    * Save which metrics the agent of a device should collect and display.
    * @param {number} id - Device identifier.
    * @param {MetricKey[]} metrics - Selected metric keys.
@@ -273,6 +300,7 @@ export const useDevices = (
     deleteDevice,
     editDevice,
     wakeDevice,
+    requestAgentUpdate,
     pendingIds,
     loadHistory,
     saveMetricSelection,

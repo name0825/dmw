@@ -98,6 +98,30 @@ const extractAgentVersion = (body: any): string | null => {
   return version.length <= 32 && AGENT_VERSION_PATTERN.test(version) ? version : null
 }
 
+const UPDATE_REPORT_STATES = ['installing', 'up_to_date', 'failed'] as const
+type UpdateReportState = (typeof UPDATE_REPORT_STATES)[number]
+const UPDATE_MESSAGE_MAX_LENGTH = 200
+
+/**
+ * Extracts the optional updateReport from a heartbeat request body.
+ * 형식이 잘못되었으면 거절하지 않고 null 로 무시한다.
+ * @param body - Request body
+ * @returns Validated state and trimmed message, or null if missing/invalid
+ */
+const extractUpdateReport = (body: any): { state: UpdateReportState; message: string | null } | null => {
+  const raw = (body || {}).updateReport
+  if (!raw || typeof raw !== 'object') return null
+  if (!UPDATE_REPORT_STATES.includes(raw.state)) return null
+  let message: string | null = null
+  if (raw.message !== undefined) {
+    if (typeof raw.message !== 'string') return null
+    const trimmed = raw.message.trim()
+    if (trimmed.length > UPDATE_MESSAGE_MAX_LENGTH) return null
+    message = trimmed || null
+  }
+  return { state: raw.state, message }
+}
+
 /**
  * Handles the agent pairing process.
  * 코드가 특정 기기로 지정되어 발급되었다면 그 기기의 MAC 과 요청의 MAC 이 일치할
@@ -265,6 +289,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
 
   const reportedMetrics = extractHeartbeatMetrics(request.body)
   const agentVersion = extractAgentVersion(request.body)
+  const updateReport = extractUpdateReport(request.body)
   const db = getDb()
 
   try {
@@ -302,12 +327,34 @@ export const handleHeartbeat = async (request: any, reply: any) => {
     // overwritten to ONLINE in this same statement, so the WAKE_TIMEOUT
     // deadline logic in deviceStatus.ts (which only reads updated_at while
     // status is still WAKE_TIMEOUT) is unaffected.
+    let updateRequested = false
     const heartbeatApplied = await withTransaction(async (tx) => {
+      const before = await tx.get('SELECT agent_version, update_state FROM devices WHERE id = ?', [deviceId])
       const result = await tx.run(
         'UPDATE devices SET last_seen = ?, status = ?, updated_at = ?, agent_version = COALESCE(?, agent_version) WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
         [now, STATUS_ONLINE, now, agentVersion, deviceId, device.agent_key_hash, agentKey.substring(0, API_KEY_HINT_LEN)]
       )
       if (result.changes !== 1) return false
+
+      const updateState: string | null = before?.update_state ?? null
+      const updateInProgress = updateState === 'delivered' || updateState === 'installing'
+      if (updateInProgress && agentVersion !== null && agentVersion !== before?.agent_version) {
+        await tx.run(
+          "UPDATE devices SET update_state = 'updated', update_message = NULL, update_state_at = ? WHERE id = ? AND update_state IN ('delivered', 'installing')",
+          [now, deviceId]
+        )
+      } else if (updateInProgress && updateReport) {
+        await tx.run(
+          "UPDATE devices SET update_state = ?, update_message = ?, update_state_at = ? WHERE id = ? AND update_state IN ('delivered', 'installing')",
+          [updateReport.state, updateReport.message, now, deviceId]
+        )
+      } else if (updateState === 'requested') {
+        await tx.run(
+          "UPDATE devices SET update_state = 'delivered', update_message = NULL, update_state_at = ? WHERE id = ? AND update_state = 'requested'",
+          [now, deviceId]
+        )
+        updateRequested = true
+      }
 
       const current = await tx.get('SELECT metric_selection FROM devices WHERE id = ?', [deviceId])
       selection = parseMetricSelection(current?.metric_selection)
@@ -357,7 +404,7 @@ export const handleHeartbeat = async (request: any, reply: any) => {
       console.error('Error broadcasting state after heartbeat:', broadcastError)
     }
 
-    reply.send({ status: 'ok', collect: selection })
+    reply.send({ status: 'ok', collect: selection, ...(updateRequested ? { update: true } : {}) })
   } catch (error) {
     console.error('Error during agent heartbeat:', error)
     reply.code(500).send({ message: 'Internal server error during heartbeat' })
@@ -393,7 +440,7 @@ export const handleUnpair = async (request: any, reply: any) => {
     const now = new Date().toISOString()
     const unpaired = await withTransaction(async (tx) => {
       const result = await tx.run(
-        'UPDATE devices SET agent_key_hash = NULL, agent_key_hint = NULL, agent_paired = 0, paired_at = NULL, last_seen = NULL, status = ?, updated_at = ? WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
+        'UPDATE devices SET agent_key_hash = NULL, agent_key_hint = NULL, agent_paired = 0, paired_at = NULL, last_seen = NULL, status = ?, updated_at = ?, update_state = NULL, update_message = NULL, update_state_at = NULL WHERE id = ? AND agent_paired = 1 AND agent_key_hash = ? AND agent_key_hint = ?',
         [STATUS_NOT_PAIRED, now, device.id, device.agent_key_hash, agentKeyHint]
       )
       if (result.changes !== 1) return false

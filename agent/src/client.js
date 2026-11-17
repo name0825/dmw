@@ -21,11 +21,11 @@ export const pairWithServer = async (serverUrl, pairingCode, name) => {
   })
 }
 
-export const sendHeartbeat = (serverUrl, apiKey, metrics) =>
+export const sendHeartbeat = (serverUrl, apiKey, metrics, updateReport) =>
   requestJson(`${serverUrl}/agent/heartbeat`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify({ ...metrics, agentVersion: currentVersion }),
+    body: JSON.stringify({ ...metrics, agentVersion: currentVersion, ...(updateReport ? { updateReport } : {}) }),
   })
 
 export const unpairFromServer = (serverUrl, apiKey) =>

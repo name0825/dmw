@@ -1,4 +1,5 @@
 import { DEVICE_WAKE_RATE_LIMIT_MAX, RATE_LIMIT_TIME_WINDOW } from '../config/constants.js'
+import { getLatestAgentRelease } from '../services/agentRelease.js'
 import * as deviceService from '../services/devices.js'
 
 // ============================================================================
@@ -40,6 +41,14 @@ export const registerDeviceRoutes = (app: any) => {
 
   app.delete('/devices/:id',async (request: any, reply: any) => {
     return await deviceService.handleDeleteDevice(request, reply)
+  })
+
+  app.get('/agent-release/latest', async (request: any) => {
+    return await getLatestAgentRelease({ force: request.query?.refresh === '1' })
+  })
+
+  app.post('/devices/:id/agent-update', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {
+    return await deviceService.handleRequestAgentUpdate(request, reply)
   })
 
   app.post('/devices/:id/wake', { config: { rateLimit: { max: DEVICE_WAKE_RATE_LIMIT_MAX, timeWindow: RATE_LIMIT_TIME_WINDOW } } }, async (request: any, reply: any) => {

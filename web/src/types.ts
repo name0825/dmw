@@ -37,6 +37,16 @@ export type Device = {
   cpu_clock?: number | null
   memory_clock?: number | null
   disks?: DiskMetric[] | null
+  update_state?: 'requested' | 'delivered' | 'installing' | 'up_to_date' | 'failed' | 'updated' | null
+  update_message?: string | null
+  update_state_at?: string | null
+}
+
+export type AgentRelease = {
+  version: string | null
+  publishedAt?: string | null
+  error?: string
+  checkedAt: string
 }
 
 export type DeviceForm = {

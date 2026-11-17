@@ -44,6 +44,7 @@ export const handleGetDevices = async (_request: any, reply: any) => {
               devices.created_at, devices.updated_at,
               devices.ssh_username, devices.ssh_port, devices.ssh_host_key,
               devices.metric_selection,
+              devices.update_state, devices.update_message, devices.update_state_at,
               device_metrics_latest.cpu_usage, device_metrics_latest.memory_usage, device_metrics_latest.disk_usage,
               device_metrics_latest.cpu_temp, device_metrics_latest.memory_temp,
               device_metrics_latest.cpu_clock, device_metrics_latest.memory_clock,
@@ -342,6 +343,50 @@ export const handleDeleteDevice = async (request: any, reply: any) => {
  * until its agent reports back; an unpaired one keeps its status because nothing
  * would ever clear the timeout.
  */
+export const handleRequestAgentUpdate = async (request: any, reply: any) => {
+  const deviceId = Number(request.params.id)
+  if (!Number.isInteger(deviceId)) {
+    reply.code(400).send({ message: 'Invalid device id' })
+    return
+  }
+
+  const db = getDb()
+  try {
+    const device = await db.get('SELECT id, agent_paired FROM devices WHERE id = ?', [deviceId])
+    if (!device) {
+      reply.code(404).send({ message: 'Device not found' })
+      return
+    }
+    if (device.agent_paired !== 1) {
+      reply.code(409).send({ message: 'Agent is not paired' })
+      return
+    }
+
+    const now = new Date().toISOString()
+    const requested = await withTransaction(async (tx) => {
+      const result = await tx.run(
+        "UPDATE devices SET update_state = 'requested', update_message = NULL, update_state_at = ? WHERE id = ? AND agent_paired = 1",
+        [now, deviceId]
+      )
+      return result.changes === 1
+    })
+    if (!requested) {
+      reply.code(409).send({ message: 'Agent is not paired' })
+      return
+    }
+
+    try {
+      await broadcastState()
+    } catch (broadcastError) {
+      console.error('Error broadcasting state after agent update request:', broadcastError)
+    }
+    reply.send({ status: 'requested' })
+  } catch (error) {
+    console.error('Error requesting agent update:', error)
+    reply.code(500).send({ message: 'Internal server error' })
+  }
+}
+
 export const handleWakeDevice = async (request: any, reply: any) => {
   const { id } = request.params
   const db = getDb()

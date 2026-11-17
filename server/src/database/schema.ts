@@ -29,7 +29,10 @@ export const initDb = async (db: Database): Promise<void> => {
       status TEXT NOT NULL DEFAULT 'NOT_PAIRED',
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
       updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      metric_selection TEXT
+      metric_selection TEXT,
+      update_state TEXT,
+      update_message TEXT,
+      update_state_at TEXT
     );
 
     CREATE TABLE IF NOT EXISTS pairing_codes (
@@ -185,6 +188,11 @@ const migrateSchema = async (db: Database): Promise<void> => {
   }
   if (!deviceColumns.some((column) => column.name === 'metric_selection')) {
     await db.exec('ALTER TABLE devices ADD COLUMN metric_selection TEXT')
+  }
+  for (const column of ['update_state', 'update_message', 'update_state_at']) {
+    if (!deviceColumns.some((existing) => existing.name === column)) {
+      await db.exec(`ALTER TABLE devices ADD COLUMN ${column} TEXT`)
+    }
   }
 
   const extraMetricColumns: [string, string][] = [
