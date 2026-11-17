@@ -48,6 +48,18 @@ const formatTemp = (value: number) => `${Math.round(value)}°C`
 
 const formatCpuClock = (mhz: number) => (mhz >= 1000 ? `${(mhz / 1000).toFixed(1)} GHz` : `${Math.round(mhz)} MHz`)
 
+const formatRelativeTime = (iso: string) => {
+  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000))
+  if (Number.isNaN(seconds) || seconds < 60) return '방금 전'
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) return `${minutes}분 전`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}시간 전`
+  return `${Math.floor(hours / 24)}일 전`
+}
+
+const meterLevel = (value: number) => (value >= 90 ? ' danger' : value >= 80 ? ' warning' : '')
+
 const STATUS_LABELS: Record<string, string> = { ONLINE: '온라인', OFFLINE: '오프라인', NOT_PAIRED: '미페어링' }
 
 const statusLabel = (status: string) => STATUS_LABELS[status] ?? status
@@ -98,6 +110,7 @@ export default function App() {
   const [sshOpenId, setSshOpenId] = useState<number | null>(null)
   const [alertsExpanded, setAlertsExpanded] = useState(false)
   const [metricOpenId, setMetricOpenId] = useState<number | null>(null)
+  const [menuOpenId, setMenuOpenId] = useState<number | null>(null)
 
   const apiBase = getApiBaseUrl()
   const wsBase = getWebSocketBaseUrl()
@@ -161,6 +174,22 @@ export default function App() {
   useEffect(() => {
     if (editingId !== null) formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
   }, [editingId])
+
+  useEffect(() => {
+    if (menuOpenId === null) return undefined
+    const onPointerDown = (event: MouseEvent) => {
+      if (!(event.target as Element).closest('.overflow-menu')) setMenuOpenId(null)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpenId(null)
+    }
+    document.addEventListener('mousedown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [menuOpenId])
 
   const confirmDelete = (device: Device) => {
     if (window.confirm(`'${device.name}' 디바이스를 삭제할까요?`)) void deleteDevice(device.id)
@@ -266,41 +295,53 @@ export default function App() {
 
     return (
       <div className="metric-stack">
-        {isSelected(device, 'cpu_usage') && (
-          <div>
-            <label>CPU</label>
-            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.cpu_usage), 100)}%` }} /></div>
-            <small>{liveUsage(device, device.cpu_usage)}%</small>
-          </div>
-        )}
-        {isSelected(device, 'memory_usage') && (
-          <div>
-            <label>MEM</label>
-            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.memory_usage), 100)}%` }} /></div>
-            <small>{liveUsage(device, device.memory_usage)}%</small>
-          </div>
-        )}
-        {isSelected(device, 'disk_usage') && (usageDisks.length > 0 ? (
-          usageDisks.map((disk) => (
-            <div key={disk.name}>
-              <label>DISK {disk.name}</label>
-              <div className="meter"><span style={{ width: `${Math.min(disk.usage ?? 0, 100)}%` }} /></div>
-              <small>{disk.usage}%{showDiskTemp && hasValue(disk.tempC) ? ` · ${formatTemp(disk.tempC)}` : ''}</small>
+        <div className="metric-grid">
+          {isSelected(device, 'cpu_usage') && (
+            <div className="metric-item">
+              <div className="metric-line">
+                <label>CPU</label>
+                <small>{liveUsage(device, device.cpu_usage)}%</small>
+              </div>
+              <div className="meter"><span className={meterLevel(liveUsage(device, device.cpu_usage))} style={{ width: `${Math.min(liveUsage(device, device.cpu_usage), 100)}%` }} /></div>
             </div>
-          ))
-        ) : (
-          <div>
-            <label>DISK</label>
-            <div className="meter"><span style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
-            <small>{liveUsage(device, device.disk_usage)}%</small>
-          </div>
-        ))}
-        {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.map((disk) => (
-          <div key={disk.name}>
-            <label>DISK {disk.name}</label>
-            <small>{formatTemp(disk.tempC as number)}</small>
-          </div>
-        ))}
+          )}
+          {isSelected(device, 'memory_usage') && (
+            <div className="metric-item">
+              <div className="metric-line">
+                <label>MEM</label>
+                <small>{liveUsage(device, device.memory_usage)}%</small>
+              </div>
+              <div className="meter"><span className={meterLevel(liveUsage(device, device.memory_usage))} style={{ width: `${Math.min(liveUsage(device, device.memory_usage), 100)}%` }} /></div>
+            </div>
+          )}
+          {isSelected(device, 'disk_usage') && (usageDisks.length > 0 ? (
+            usageDisks.map((disk) => (
+              <div className="metric-item" key={disk.name}>
+                <div className="metric-line">
+                  <label>DISK {disk.name}</label>
+                  <small>{disk.usage}%{showDiskTemp && hasValue(disk.tempC) ? ` · ${formatTemp(disk.tempC)}` : ''}</small>
+                </div>
+                <div className="meter"><span className={meterLevel(disk.usage ?? 0)} style={{ width: `${Math.min(disk.usage ?? 0, 100)}%` }} /></div>
+              </div>
+            ))
+          ) : (
+            <div className="metric-item">
+              <div className="metric-line">
+                <label>DISK</label>
+                <small>{liveUsage(device, device.disk_usage)}%</small>
+              </div>
+              <div className="meter"><span className={meterLevel(liveUsage(device, device.disk_usage))} style={{ width: `${Math.min(liveUsage(device, device.disk_usage), 100)}%` }} /></div>
+            </div>
+          ))}
+          {!isSelected(device, 'disk_usage') && showDiskTemp && tempDisks.map((disk) => (
+            <div className="metric-item" key={disk.name}>
+              <div className="metric-line">
+                <label>DISK {disk.name}</label>
+                <small>{formatTemp(disk.tempC as number)}</small>
+              </div>
+            </div>
+          ))}
+        </div>
         {chips.length > 0 && (
           <div className="metric-chips">
             {chips.map((chip) => <span key={chip} className="metric-chip">{chip}</span>)}
@@ -456,37 +497,84 @@ export default function App() {
                 </div>
               ) : (
                 sortedDevices.map((device) => (
-                  <div className="device-item" key={device.id}>
-                    <div>
-                      <h3>{device.name}</h3>
-                      <p>{device.ip_address} · {device.mac_address}</p>
-                      <small>{device.last_seen ? `마지막 응답: ${new Date(device.last_seen).toLocaleString()}` : '응답 기록 없음'}</small>
-                      {device.agent_paired ? renderMetrics(device) : null}
+                  <div
+                    className={`device-item${sshOpenId === device.id || historyByDevice[device.id]?.length ? ' wide' : ''}`}
+                    key={device.id}
+                  >
+                    <div className="device-header">
+                      <div className="device-title">
+                        <h3 title={device.name}>{device.name}</h3>
+                        <span className={`badge ${String(device.status).toLowerCase()}`}>{statusLabel(device.status)}</span>
+                        {device.status !== 'NOT_PAIRED' && <span className="device-chip">{device.agent_paired ? '페어링됨' : '미페어링'}</span>}
+                        {device.agent_version && <span className="device-chip">v{device.agent_version}</span>}
+                      </div>
+                      <div className="device-actions">
+                        <button
+                          className={device.status === 'ONLINE' ? 'secondary' : undefined}
+                          onClick={() => wakeDevice(device.id)}
+                          disabled={pendingIds.has(device.id)}
+                        >깨우기</button>
+                        <button className="secondary" onClick={() => loadHistory(device.id)}>기록</button>
+                        <button
+                          className={`secondary${sshOpenId === device.id ? ' active' : ''}`}
+                          aria-pressed={sshOpenId === device.id}
+                          onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}
+                        >SSH</button>
+                        <div className="overflow-menu">
+                          <button
+                            className="secondary overflow-toggle"
+                            aria-label="더 보기"
+                            aria-haspopup="menu"
+                            aria-expanded={menuOpenId === device.id}
+                            onClick={() => setMenuOpenId(menuOpenId === device.id ? null : device.id)}
+                          >⋯</button>
+                          {menuOpenId === device.id && (
+                            <div className="overflow-dropdown" role="menu">
+                              <button
+                                role="menuitem"
+                                className={metricOpenId === device.id ? 'active' : undefined}
+                                aria-pressed={metricOpenId === device.id}
+                                onClick={() => {
+                                  setMetricOpenId(metricOpenId === device.id ? null : device.id)
+                                  setMenuOpenId(null)
+                                }}
+                              >수집 항목</button>
+                              {!!device.agent_paired && (
+                                <button
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setMenuOpenId(null)
+                                    void generateRepairingCode(device)
+                                  }}
+                                >재페어링 코드</button>
+                              )}
+                              <button
+                                role="menuitem"
+                                onClick={() => {
+                                  setMenuOpenId(null)
+                                  editDevice(device)
+                                }}
+                              >수정</button>
+                              <button
+                                role="menuitem"
+                                className="danger"
+                                disabled={pendingIds.has(device.id)}
+                                onClick={() => {
+                                  setMenuOpenId(null)
+                                  confirmDelete(device)
+                                }}
+                              >삭제</button>
+                            </div>
+                          )}
+                        </div>
+                      </div>
                     </div>
-                    <div className="device-meta">
-                      <span className={`badge ${String(device.status).toLowerCase()}`}>{statusLabel(device.status)}</span>
-                      {device.status !== 'NOT_PAIRED' && <span>{device.agent_paired ? '페어링됨' : '미페어링'}</span>}
-                      {device.agent_version && <span>에이전트 v{device.agent_version}</span>}
-                    </div>
-                    <div className="device-actions">
-                      <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>깨우기</button>
-                      <button className="secondary" onClick={() => loadHistory(device.id)}>기록</button>
-                      <button
-                        className={`secondary${sshOpenId === device.id ? ' active' : ''}`}
-                        aria-pressed={sshOpenId === device.id}
-                        onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}
-                      >SSH</button>
-                      <button
-                        className={`secondary${metricOpenId === device.id ? ' active' : ''}`}
-                        aria-pressed={metricOpenId === device.id}
-                        onClick={() => setMetricOpenId(metricOpenId === device.id ? null : device.id)}
-                      >수집 항목</button>
-                      {!!device.agent_paired && (
-                        <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>
-                      )}
-                      <button className="secondary" onClick={() => editDevice(device)}>수정</button>
-                      <button className="danger" onClick={() => confirmDelete(device)} disabled={pendingIds.has(device.id)}>삭제</button>
-                    </div>
+                    <p className="device-sub">
+                      {device.ip_address} · {device.mac_address} · {device.last_seen ? (
+                        <span title={new Date(device.last_seen).toLocaleString()}>마지막 응답 {formatRelativeTime(device.last_seen)}</span>
+                      ) : '응답 기록 없음'}
+                    </p>
+                    {device.agent_paired ? renderMetrics(device) : null}
                     {metricOpenId === device.id && (
                       <div className="metric-select">
                         {METRIC_OPTIONS.map((option) => (
