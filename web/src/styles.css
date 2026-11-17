@@ -674,7 +674,12 @@ select {
 
   .device-header {
     flex-direction: column;
+    flex-wrap: nowrap;
     align-items: stretch;
+  }
+
+  .device-title {
+    flex: 0 0 auto;
   }
 
   .device-actions {
