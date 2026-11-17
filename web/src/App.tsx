@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { getApiBaseUrl, getWebSocketBaseUrl } from './api'
 import SshPanel from './SshPanel'
@@ -47,6 +47,10 @@ const hasValue = (value: number | null | undefined): value is number => typeof v
 const formatTemp = (value: number) => `${Math.round(value)}°C`
 
 const formatCpuClock = (mhz: number) => (mhz >= 1000 ? `${(mhz / 1000).toFixed(1)} GHz` : `${Math.round(mhz)} MHz`)
+
+const STATUS_LABELS: Record<string, string> = { ONLINE: '온라인', OFFLINE: '오프라인', NOT_PAIRED: '미페어링' }
+
+const statusLabel = (status: string) => STATUS_LABELS[status] ?? status
 
 const compareName =(a: Device, b: Device) => a.name.localeCompare(b.name, 'ko') || a.id - b.id
 
@@ -145,6 +149,22 @@ export default function App() {
   }
 
   useDeviceSocket(token, wsBase, refreshSession, logoutUser, setDevices)
+
+  const formCardRef = useRef<HTMLElement>(null)
+
+  useEffect(() => {
+    if (!message) return undefined
+    const timer = window.setTimeout(() => setMessage(''), 4000)
+    return () => window.clearTimeout(timer)
+  }, [message])
+
+  useEffect(() => {
+    if (editingId !== null) formCardRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  }, [editingId])
+
+  const confirmDelete = (device: Device) => {
+    if (window.confirm(`'${device.name}' 디바이스를 삭제할까요?`)) void deleteDevice(device.id)
+  }
 
   /**
    * Issue a pairing code that is not yet bound to any device.
@@ -329,45 +349,65 @@ export default function App() {
           <p className="eyebrow">DMW</p>
           <h1>Device Manager Web</h1>
         </div>
-        {token ? (
-          <button onClick={logoutUser}>로그아웃</button>
-        ) : (
-          <button onClick={loginUser} disabled={loggingIn}>로그인</button>
-        )}
+        {token && <button className="secondary" onClick={logoutUser}>로그아웃</button>}
       </header>
 
+      {message && (
+        <div className="toast" role="status" aria-live="polite">
+          <span>{message}</span>
+          <button className="toast-close" aria-label="알림 닫기" onClick={() => setMessage('')}>×</button>
+        </div>
+      )}
+
       {!token ? (
-        <section className="card auth-card">
+        <form
+          className="card auth-card"
+          onSubmit={(e) => {
+            e.preventDefault()
+            loginUser()
+          }}
+        >
           <h2>관리자 로그인</h2>
           <label>
             이메일
-            <input value={login.email} onChange={(e) => setLogin({ ...login, email: e.target.value })} />
+            <input
+              type="email"
+              autoComplete="username"
+              autoFocus
+              value={login.email}
+              onChange={(e) => setLogin({ ...login, email: e.target.value })}
+            />
           </label>
           <label>
             비밀번호
-            <input type="password" value={login.password} onChange={(e) => setLogin({ ...login, password: e.target.value })} />
+            <input
+              type="password"
+              autoComplete="current-password"
+              value={login.password}
+              onChange={(e) => setLogin({ ...login, password: e.target.value })}
+            />
           </label>
-          <button onClick={loginUser} disabled={loggingIn}>로그인</button>
-        </section>
+          <button type="submit" disabled={loggingIn}>로그인</button>
+        </form>
       ) : (
         <>
           <section className="card overview-panel">
             <h2>요약</h2>
             <div className="summary-grid">
               <div className="summary-card">
-                <span>Total</span>
+                <span>전체</span>
                 <strong>{summary.total}</strong>
               </div>
               <div className="summary-card success">
-                <span>Online</span>
+                <span>온라인</span>
                 <strong>{summary.online}</strong>
               </div>
               <div className="summary-card danger">
-                <span>Offline</span>
+                <span>오프라인</span>
                 <strong>{summary.offline}</strong>
               </div>
               <div className="summary-card warning">
-                <span>Not paired</span>
+                <span>미페어링</span>
                 <strong>{summary.notPaired}</strong>
               </div>
             </div>
@@ -396,91 +436,56 @@ export default function App() {
             </section>
           )}
 
-          <section className="card pairing-card">
-            <h2>에이전트 페어링 코드 발급</h2>
-            <p>에이전트를 설치할 PC 의 DMW 에이전트 프로그램에 서버 주소와 아래 코드를 입력하면, 검증 성공 시 해당 PC 가 자동으로 디바이스 목록에 등록됩니다.</p>
-            <div className="action-row">
-              <button onClick={generatePairingCode}>페어링 코드 생성</button>
-            </div>
-            {pairingInfo && (
-              <div className="pairing-box">
-                <strong>발급된 페어링 코드</strong>
-                {pairingInfo.targetDeviceName && <small>대상 디바이스: {pairingInfo.targetDeviceName}</small>}
-                <div className="pairing-code">{pairingInfo.code}</div>
-                <small>유효시간: {new Date(pairingInfo.expiresAt).toLocaleString()}</small>
-                <small>서버 주소: {apiBase}</small>
-                <div className="action-row">
-                  <button className="secondary" onClick={copyPairingCode}>코드 복사</button>
-                </div>
-              </div>
-            )}
-          </section>
-
-          <section className="card form-card">
-            <h2>{editingId !== null ? '디바이스 수정' : '수동 디바이스 등록 (WOL 전용)'}</h2>
-            <p>에이전트를 연결하지 않고 Wake-on-LAN 만 사용할 디바이스는 이름·MAC·IP 를 직접 입력해 등록하세요.</p>
-            <div className="form-grid">
-              <label>
-                이름
-                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Home NAS" />
-              </label>
-              <label>
-                MAC 주소
-                <input value={form.mac_address} onChange={(e) => setForm({ ...form, mac_address: e.target.value })} placeholder="AA:BB:CC:DD:EE:FF" />
-              </label>
-              <label>
-                IP 주소
-                <input value={form.ip_address} onChange={(e) => setForm({ ...form, ip_address: e.target.value })} placeholder="192.168.0.20" />
-              </label>
-            </div>
-            <div className="action-row">
-              <button onClick={saveDevice} disabled={saving}>{editingId !== null ? '저장' : '디바이스 등록'}</button>
-              {editingId !== null && (
-                <button className="secondary" onClick={() => {
-                  setEditingId(null)
-                  setForm({ name: '', mac_address: '', ip_address: '' })
-                }}>취소</button>
-              )}
-            </div>
-          </section>
-
           <section className="card status-panel">
             <div className="panel-header">
               <h2>디바이스 상태</h2>
-              <select value={deviceSort} onChange={(e) => changeDeviceSort(e.target.value as DeviceSortKey)} aria-label="디바이스 정렬">
-                {DEVICE_SORT_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>{option.label}</option>
-                ))}
-              </select>
+              <label className="sort-control">
+                <span>정렬</span>
+                <select value={deviceSort} onChange={(e) => changeDeviceSort(e.target.value as DeviceSortKey)}>
+                  {DEVICE_SORT_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
             </div>
-            {message && <p className="message">{message}</p>}
             <div className="device-list">
               {devices.length === 0 ? (
-                <p>등록된 디바이스가 없습니다.</p>
+                <div className="empty-state">
+                  <strong>등록된 디바이스가 없습니다</strong>
+                  <p>아래 '디바이스 추가'에서 페어링 코드를 발급하거나 수동 등록하세요.</p>
+                </div>
               ) : (
                 sortedDevices.map((device) => (
                   <div className="device-item" key={device.id}>
                     <div>
                       <h3>{device.name}</h3>
                       <p>{device.ip_address} · {device.mac_address}</p>
-                      <small>{device.last_seen ? `Last seen: ${new Date(device.last_seen).toLocaleString()}` : 'Heartbeat 없음'}</small>
-                      {renderMetrics(device)}
+                      <small>{device.last_seen ? `마지막 응답: ${new Date(device.last_seen).toLocaleString()}` : '응답 기록 없음'}</small>
+                      {device.agent_paired ? renderMetrics(device) : null}
                     </div>
                     <div className="device-meta">
-                      <span className={`badge ${String(device.status).toLowerCase()}`}>{device.status}</span>
-                      <span>{device.agent_paired ? 'Paired' : 'Not Paired'}</span>
+                      <span className={`badge ${String(device.status).toLowerCase()}`}>{statusLabel(device.status)}</span>
+                      {device.status !== 'NOT_PAIRED' && <span>{device.agent_paired ? '페어링됨' : '미페어링'}</span>}
                       {device.agent_version && <span>에이전트 v{device.agent_version}</span>}
                     </div>
                     <div className="device-actions">
-                      <button onClick={() => editDevice(device)}>수정</button>
-                      <button className="secondary" onClick={() => deleteDevice(device.id)} disabled={pendingIds.has(device.id)}>삭제</button>
-                      <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>Wake</button>
-                      <button className="secondary" onClick={() => loadHistory(device.id)}>History</button>
-                      <button className="secondary" onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}>SSH</button>
-                      <button className="secondary" onClick={() => setMetricOpenId(metricOpenId === device.id ? null : device.id)}>수집 항목</button>
-                      {device.agent_paired && (
+                      <button onClick={() => wakeDevice(device.id)} disabled={pendingIds.has(device.id)}>깨우기</button>
+                      <button className="secondary" onClick={() => loadHistory(device.id)}>기록</button>
+                      <button
+                        className={`secondary${sshOpenId === device.id ? ' active' : ''}`}
+                        aria-pressed={sshOpenId === device.id}
+                        onClick={() => setSshOpenId(sshOpenId === device.id ? null : device.id)}
+                      >SSH</button>
+                      <button
+                        className={`secondary${metricOpenId === device.id ? ' active' : ''}`}
+                        aria-pressed={metricOpenId === device.id}
+                        onClick={() => setMetricOpenId(metricOpenId === device.id ? null : device.id)}
+                      >수집 항목</button>
+                      {!!device.agent_paired && (
                         <button className="secondary" onClick={() => generateRepairingCode(device)}>재페어링 코드</button>
                       )}
+                      <button className="secondary" onClick={() => editDevice(device)}>수정</button>
+                      <button className="danger" onClick={() => confirmDelete(device)} disabled={pendingIds.has(device.id)}>삭제</button>
                     </div>
                     {metricOpenId === device.id && (
                       <div className="metric-select">
@@ -537,6 +542,59 @@ export default function App() {
                 ))
               )}
             </div>
+          </section>
+
+          <section className="add-section">
+          <h2>디바이스 추가</h2>
+          <div className="add-grid">
+          <section className="card pairing-card">
+            <h2>에이전트 페어링 코드 발급</h2>
+            <p>에이전트를 설치할 PC 의 DMW 에이전트 프로그램에 서버 주소와 아래 코드를 입력하면, 검증 성공 시 해당 PC 가 자동으로 디바이스 목록에 등록됩니다.</p>
+            <div className="action-row">
+              <button onClick={generatePairingCode}>페어링 코드 생성</button>
+            </div>
+            {pairingInfo && (
+              <div className="pairing-box">
+                <strong>발급된 페어링 코드</strong>
+                {pairingInfo.targetDeviceName && <small>대상 디바이스: {pairingInfo.targetDeviceName}</small>}
+                <div className="pairing-code">{pairingInfo.code}</div>
+                <small>유효시간: {new Date(pairingInfo.expiresAt).toLocaleString()}</small>
+                <small>서버 주소: {apiBase}</small>
+                <div className="action-row">
+                  <button className="secondary" onClick={copyPairingCode}>코드 복사</button>
+                </div>
+              </div>
+            )}
+          </section>
+
+          <section className="card form-card" ref={formCardRef}>
+            <h2>{editingId !== null ? '디바이스 수정' : '수동 디바이스 등록 (WOL 전용)'}</h2>
+            <p>에이전트를 연결하지 않고 Wake-on-LAN 만 사용할 디바이스는 이름·MAC·IP 를 직접 입력해 등록하세요.</p>
+            <div className="form-grid">
+              <label>
+                이름
+                <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="Home NAS" />
+              </label>
+              <label>
+                MAC 주소
+                <input value={form.mac_address} onChange={(e) => setForm({ ...form, mac_address: e.target.value })} placeholder="AA:BB:CC:DD:EE:FF" />
+              </label>
+              <label>
+                IP 주소
+                <input value={form.ip_address} onChange={(e) => setForm({ ...form, ip_address: e.target.value })} placeholder="192.168.0.20" />
+              </label>
+            </div>
+            <div className="action-row">
+              <button onClick={saveDevice} disabled={saving}>{editingId !== null ? '저장' : '디바이스 등록'}</button>
+              {editingId !== null && (
+                <button className="secondary" onClick={() => {
+                  setEditingId(null)
+                  setForm({ name: '', mac_address: '', ip_address: '' })
+                }}>취소</button>
+              )}
+            </div>
+          </section>
+          </div>
           </section>
         </>
       )}
