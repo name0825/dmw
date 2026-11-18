@@ -119,6 +119,16 @@ test('df parsing on macOS skips system snapshot volumes except Data', () => {
   ])
 })
 
+test('df parsing on macOS keeps the Data volume even when Recovery is listed first', () => {
+  const stdout = [
+    'Filesystem   1024-blocks      Used Available Capacity Mounted on',
+    '/dev/disk3s3    500000000 300000000 200000000    60% /Volumes/Recovery',
+    '/dev/disk5s1      1000000    500000    500000    50% /Volumes/External',
+    '/dev/disk3s5    500000000 300000000 200000000    60% /System/Volumes/Data',
+  ].join('\n')
+  assert.deepEqual(parseDfDisks(stdout, 'darwin').map((d) => d.name), ['/System/Volumes/Data', '/Volumes/External'])
+})
+
 const withTmp = (fn) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'dmw-sys-'))
   try { return fn(root) } finally { fs.rmSync(root, { recursive: true, force: true }) }

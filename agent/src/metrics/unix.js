@@ -102,7 +102,9 @@ const MAX_DISKS = 32
 export const parseDfDisks = (stdout, platform = os.platform()) => {
   const disks = []
   const seen = new Set()
-  for (const line of stdout.trim().split('\n').slice(1)) {
+  const lines = stdout.trim().split('\n').slice(1)
+  if (platform === 'darwin') lines.sort((a, b) => Number(/\s\/System\/Volumes\/Data$/.test(b.trim())) - Number(/\s\/System\/Volumes\/Data$/.test(a.trim())))
+  for (const line of lines) {
     const cols = line.trim().split(/\s+/)
     const source = cols[0]
     const mount = cols.slice(5).join(' ')

@@ -84,7 +84,7 @@ node agent\src\index.js
 
 메모리는 `os.totalmem()`/`os.freemem()`(macOS 는 `vm_stat` 의 앱 메모리(anonymous - purgeable) + wired + compressed 페이지, 활성 상태 보기의 "사용된 메모리" 기준), CPU 는 두 시점의 `os.cpus()` tick 차분으로 계산합니다. 디스크 사용률은 `df -P` 결과에서 `(전체 - 가용) / 전체`로 계산하며, 수집에 실패하면 heartbeat 요청에서 해당 필드를 생략합니다.
 
-Linux에서는 물리 디스크를 용량 및 확인 가능한 온도와 함께 표시하고, 파일시스템 사용률은 루트 경로 `/`만 수집합니다. `/boot/efi`와 다른 마운트 경로는 수집하지 않습니다. 마운트되지 않은 디스크도 목록에 포함되지만 사용률은 계산하지 않으며, `/etc/pve` 같은 가상 파일시스템은 제외합니다. 물리 디스크는 `lsblk`로 수집하고 사용할 수 없으면 sysfs를 이용합니다. 물리 디스크는 최대 32개이며, 대표 디스크 사용률은 `/`의 사용률입니다. macOS에서는 APFS 데이터 볼륨 `/System/Volumes/Data` 등 `df`로 확인되는 볼륨을 표시합니다.
+Linux에서는 물리 디스크를 용량 및 확인 가능한 온도와 함께 표시하고, 파일시스템 사용률은 루트 경로 `/`만 수집합니다. `/boot/efi`와 다른 마운트 경로는 수집하지 않습니다. 마운트되지 않은 디스크도 목록에 포함되지만 사용률은 계산하지 않으며, `/etc/pve` 같은 가상 파일시스템은 제외합니다. 물리 디스크는 `lsblk`로 수집하고 사용할 수 없으면 sysfs를 이용합니다. 물리 디스크는 최대 32개이며, 대표 디스크 사용률은 `/`의 사용률입니다. macOS에서는 APFS 데이터 볼륨 `/System/Volumes/Data` 등 `df`로 확인되는 볼륨을 표시하되, 같은 APFS 컨테이너의 볼륨(예: `/Volumes/Recovery`)은 공간을 공유하므로 컨테이너당 하나(데이터 볼륨 우선)만 표시합니다. macOS에서는 CPU 클럭을 수집하지 않습니다(Apple Silicon의 `os.cpus()` 값은 실제 클럭이 아닌 고정값).
 
 ```bash
 node agent/src/index.js
