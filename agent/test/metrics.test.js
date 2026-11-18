@@ -111,6 +111,7 @@ test('df parsing on macOS skips system snapshot volumes except Data', () => {
     '/dev/disk3s6    500000000   2000000 200000000     1% /System/Volumes/VM',
     '/dev/disk3s5    500000000 300000000 200000000    60% /System/Volumes/Data',
     '/dev/disk5s1      1000000    500000    500000    50% /Volumes/External',
+    '/dev/disk3s3    500000000 300000000 200000000    60% /Volumes/Recovery',
   ].join('\n')
   assert.deepEqual(parseDfDisks(stdout, 'darwin').map((d) => [d.name, d.usage]), [
     ['/System/Volumes/Data', 60],

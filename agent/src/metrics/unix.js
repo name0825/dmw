@@ -109,10 +109,13 @@ export const parseDfDisks = (stdout, platform = os.platform()) => {
     if (!source?.startsWith('/dev/') || source === '/dev/fuse' || source.startsWith('/dev/loop') || !mount || seen.has(source)) continue
     if (platform === 'linux' && mount !== '/') continue
     if (platform === 'darwin' && (mount === '/' || (mount.startsWith('/System/Volumes/') && mount !== '/System/Volumes/Data'))) continue
+    const container = platform === 'darwin' ? source.replace(/^(\/dev\/disk\d+).*$/, '$1') : source
+    if (seen.has(container)) continue
     const size = Number(cols[1])
     const available = Number(cols[3])
     if (!(size > 0) || !Number.isFinite(available)) continue
     seen.add(source)
+    seen.add(container)
     disks.push({ name: mount, source, usage: Number(clamp(((size - available) / size) * 100).toFixed(1)) })
   }
   return disks.slice(0, MAX_DISKS)
@@ -180,7 +183,7 @@ export const collectUnixMetrics = async ({ select } = {}) => {
   for (const key of ['cpuTempC', 'memoryTempC', 'cpuClockMhz', 'memoryClockMhz']) {
     if (sensors[key] !== undefined) metrics[key] = sensors[key]
   }
-  if (metrics.cpuClockMhz === undefined && sel.has('cpu_clock')) {
+  if (metrics.cpuClockMhz === undefined && sel.has('cpu_clock') && os.platform() !== 'darwin') {
     const speed = os.cpus()[0]?.speed
     if (speed > 0) metrics.cpuClockMhz = speed
   }
