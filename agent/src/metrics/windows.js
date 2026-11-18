@@ -22,7 +22,7 @@ export const buildPsScript = (select) => {
     lines.push('try { $o = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop; "FreeMem : $([long]$o.FreePhysicalMemory)"; "TotalMem : $([long]$o.TotalVisibleMemorySize)" } catch {}')
   }
   if (sel.has('cpu_clock')) {
-    lines.push('try { "CpuClock : $([int](Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property CurrentClockSpeed -Maximum).Maximum)" } catch {}')
+    lines.push('$c = 0; try { $p = Get-CimInstance Win32_PerfFormattedData_Counters_ProcessorInformation -Filter "Name=\'_Total\'" -ErrorAction Stop; $c = [int][math]::Round($p.ProcessorFrequency * $p.PercentProcessorPerformance / 100) } catch {}; if ($c -le 0) { try { $c = [int](Get-CimInstance Win32_Processor -ErrorAction Stop | Measure-Object -Property CurrentClockSpeed -Maximum).Maximum } catch {} }; if ($c -gt 0) { "CpuClock : $c" }')
   }
   if (sel.has('cpu_temp')) {
     lines.push('try { $m = Get-CimInstance -Namespace root/wmi -ClassName MSAcpi_ThermalZoneTemperature -ErrorAction Stop | ForEach-Object { $_.CurrentTemperature / 10 - 273.15 } | Measure-Object -Maximum; if ($m.Count -gt 0) { "CpuTemp : $([int][math]::Round($m.Maximum))" } } catch {}')

@@ -118,6 +118,20 @@ test('a heartbeat stores new scalars and disks, aggregate disk_usage is the max,
     assert.deepEqual(device.metric_selection, ALL_METRIC_KEYS)
     assert.equal('disks_json' in device, false)
     assert.equal('agent_key_hash' in device, false)
+
+    const second = await app.inject({
+      method: 'POST',
+      url: '/agent/heartbeat',
+      headers: { authorization: `Bearer ${apiKey}` },
+      payload: { cpuUsage: 12, memoryUsage: 21 },
+    })
+    assert.equal(second.statusCode, 200)
+    const afterOmit = await getDb().get('SELECT * FROM device_metrics_latest WHERE device_id = ?', [deviceId])
+    assert.equal(afterOmit.cpu_usage, 12)
+    assert.equal(afterOmit.cpu_clock, null)
+    assert.equal(afterOmit.memory_clock, null)
+    assert.equal(afterOmit.cpu_temp, null)
+    assert.equal(afterOmit.memory_temp, null)
   } finally {
     await app.close()
   }

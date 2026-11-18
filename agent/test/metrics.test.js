@@ -47,6 +47,14 @@ test('windows output omits missing sensors and invalid values', () => {
   assert.equal('memoryClockMhz' in metrics, false)
 })
 
+test('windows cpu clock uses the effective-frequency counter with a CurrentClockSpeed fallback', () => {
+  const script = buildPsScript(['cpu_clock'])
+  assert.ok(script.includes("Win32_PerfFormattedData_Counters_ProcessorInformation -Filter \"Name='_Total'\""))
+  assert.ok(script.includes('$p.ProcessorFrequency * $p.PercentProcessorPerformance / 100'))
+  assert.ok(script.includes('CurrentClockSpeed'))
+  assert.ok(script.includes('"CpuClock : $c"'))
+})
+
 test('windows output falls back to legacy FreeDisk/TotalDisk without Disk lines', () => {
   const metrics = parseWindowsOutput('FreeDisk : 400\nTotalDisk : 1000\n')
   assert.deepEqual(metrics, { diskUsage: 60 })
