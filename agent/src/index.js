@@ -101,6 +101,7 @@ const runHeartbeatLoop = async (intervalMs, noUpdate) => {
   process.once('SIGTERM', stop)
   try {
     while (running) {
+      if (!unlock.isHeld()) { console.warn('실행 잠금을 잃어 다른 에이전트가 실행 중입니다. 이 프로세스를 종료합니다.'); break }
       const credentials = loadCredentials()
       if (credentials && !noUpdate && Date.now() >= nextUpdate) {
         nextUpdate = Date.now() + 6 * 60 * 60 * 1000

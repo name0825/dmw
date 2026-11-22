@@ -53,7 +53,27 @@ test('windows metrics return undefined fields when PowerShell times out', async 
   assert.equal(metrics.cpuUsage, undefined)
   assert.equal(metrics.memoryUsage, undefined)
   assert.equal(metrics.diskUsage, undefined)
-  assert.equal(warnings.length, 1)
+  assert.equal(warnings.length, 2)
+})
+
+test('windows disk temperature runs in its own PowerShell call so its failure keeps other metrics', async () => {
+  const scripts = []
+  const [metrics] = await quiet(() => collectWindowsMetrics({
+    exec: async (_cmd, args) => {
+      scripts.push(args[3])
+      if (args[3].includes('Get-PhysicalDisk')) throw Object.assign(new Error('timed out'), { killed: true })
+      return { stdout: 'Cpu : 10\nFreeMem : 250\nTotalMem : 1000\nDisk : C:|400|1000|\n' }
+    },
+  }))
+  assert.equal(scripts.length, 2)
+  assert.equal(scripts.filter((script) => script.includes('Get-PhysicalDisk')).length, 1)
+  assert.deepEqual(metrics, { cpuUsage: 10, memoryUsage: 75, disks: [{ name: 'C:', usage: 60 }], diskUsage: 60 })
+
+  const merged = await collectWindowsMetrics({
+    exec: async (_cmd, args) => ({ stdout: args[3].includes('Get-PhysicalDisk') ? 'DiskTemp : C:|41\n' : 'Disk : C:|400|1000|\n' }),
+    select: ['disk_usage', 'disk_temp'],
+  })
+  assert.deepEqual(merged, { disks: [{ name: 'C:', usage: 60, tempC: 41 }], diskUsage: 60 })
 })
 
 test('windows metrics return undefined (not 0) for unparseable fields', async () => {

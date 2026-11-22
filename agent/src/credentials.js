@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
+import { randomUUID } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { execFileSync } from 'node:child_process'
 
@@ -76,6 +77,7 @@ export const clearCredentials = (expected) => {
   fs.rmSync(path.join(getStateDir(), 'credentials.json'), { force: true })
   return true
 }
+const LOCK_STALE_MS = 120000
 const bootTime = () => Math.round(Date.now() / 1000 - os.uptime())
 const parseLock = (text) => {
   try {
@@ -88,7 +90,11 @@ const parseLock = (text) => {
 const isStaleLock = (file) => {
   const info = parseLock(fs.readFileSync(file, 'utf8').trim())
   if (!info || info.pid <= 0) return Date.now() - fs.statSync(file).mtimeMs >= 10000
-  if (info.boot !== undefined && Math.abs(info.boot - bootTime()) > 120 && Date.now() - fs.statSync(file).mtimeMs > 45000) return true
+  if (info.boot !== undefined) {
+    const age = Date.now() - fs.statSync(file).mtimeMs
+    if (age > LOCK_STALE_MS) return true
+    if (Math.abs(info.boot - bootTime()) > 120 && age > 45000) return true
+  }
   try { process.kill(info.pid, 0); return false } catch (probe) { return probe.code === 'ESRCH' }
 }
 export const acquireLock = (name) => {
@@ -96,10 +102,17 @@ export const acquireLock = (name) => {
   const file = path.join(getStateDir(), `${name}.lock`)
   try {
     const fd = fs.openSync(file, 'wx', 0o600)
-    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, boot: bootTime() }))
+    const token = randomUUID()
+    fs.writeFileSync(fd, JSON.stringify({ pid: process.pid, boot: bootTime(), token }))
     fs.closeSync(fd)
-    const beat = setInterval(() => { try { const now = new Date(); fs.utimesSync(file, now, now) } catch {} }, 10000).unref()
-    return () => { clearInterval(beat); fs.unlinkSync(file) }
+    const ownsLock = () => { try { return JSON.parse(fs.readFileSync(file, 'utf8')).token === token } catch { return false } }
+    const beat = setInterval(() => {
+      if (!ownsLock()) { clearInterval(beat); return }
+      try { const now = new Date(); fs.utimesSync(file, now, now) } catch {}
+    }, 10000).unref()
+    const release = () => { clearInterval(beat); if (ownsLock()) fs.unlinkSync(file) }
+    release.isHeld = ownsLock
+    return release
   } catch (error) {
     if (error.code !== 'EEXIST') throw error
     let stale
@@ -112,6 +125,10 @@ export const acquireLock = (name) => {
     try { fs.renameSync(file, reclaimed) } catch (renameError) {
       if (renameError.code === 'ENOENT') return null
       throw renameError
+    }
+    if (!isStaleLock(reclaimed)) {
+      try { fs.renameSync(reclaimed, file) } catch { try { fs.unlinkSync(reclaimed) } catch {} }
+      return null
     }
     fs.unlinkSync(reclaimed)
     return acquireLock(name)

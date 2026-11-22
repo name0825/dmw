@@ -189,6 +189,35 @@ test('Linux collector retains physical disks and reports only root filesystem us
   }
 })
 
+for (const [label, line, statSync] of [
+  ['/dev/root without a device node', '/dev/root 100 40 60 40% /', () => { throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' }) }],
+  ['a ZFS dataset', 'rpool/ROOT/ubuntu 100 40 60 40% /', () => ({ isBlockDevice: () => false })],
+]) {
+  test(`Linux collector falls back to root usage when the root source is ${label}`, async (t) => {
+    const exec = () => { throw new Error('unexpected callback invocation') }
+    exec[promisify.custom] = async (command) => {
+      if (command === 'lsblk') return { stdout: JSON.stringify({ blockdevices: [] }) }
+      assert.equal(command, 'df')
+      return { stdout: ['Filesystem 1024-blocks Used Available Capacity Mounted on', line].join('\n') }
+    }
+    const originalExecFile = childProcess.execFile
+    childProcess.execFile = exec
+    t.mock.method(os, 'platform', () => 'linux')
+    t.mock.method(fs, 'statSync', statSync)
+    syncBuiltinESMExports()
+    try {
+      const { collectUnixMetrics } = await import(`../src/metrics/unix.js?root-fallback-${encodeURIComponent(label)}`)
+      const metrics = await collectUnixMetrics({ select: ['disk_usage'] })
+      assert.deepEqual(metrics.disks.filter((disk) => disk.kind === 'filesystem'), [{ name: '/', kind: 'filesystem', usage: 40 }])
+      assert.equal(metrics.diskUsage, 40)
+    } finally {
+      childProcess.execFile = originalExecFile
+      t.mock.restoreAll()
+      syncBuiltinESMExports()
+    }
+  })
+}
+
 test('sysfs inventory fallback excludes partitions and virtual devices and retains temperatures', () => withTmp((root) => {
   const disk = path.join(root, 'devices/pci/nvme0n1')
   const virtual = path.join(root, 'devices/virtual/block/dm-0')

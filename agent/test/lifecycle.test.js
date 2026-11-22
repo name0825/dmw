@@ -132,6 +132,37 @@ test('acquireLock reclaims empty-old, dead-pid, and pre-reboot locks but respect
   })
 })
 
+test('acquireLock reclaims a lock whose heartbeat stopped even when the pid is alive in the same boot', async () => {
+  await withStateDir(async (state) => {
+    const lock = path.join(state, 'probe.lock')
+    fs.writeFileSync(lock, JSON.stringify({ pid: process.pid, boot: currentBoot() }))
+    assert.equal(acquireLock('probe'), null)
+    const recent = new Date(Date.now() - 60000)
+    fs.utimesSync(lock, recent, recent)
+    assert.equal(acquireLock('probe'), null)
+    const past = new Date(Date.now() - 200000)
+    fs.utimesSync(lock, past, past)
+    const release = acquireLock('probe')
+    assert.equal(typeof release, 'function')
+    release()
+  })
+})
+
+test('acquireLock release does not delete a lock owned by another holder', async () => {
+  await withStateDir(async (state) => {
+    const lock = path.join(state, 'probe.lock')
+    const release = acquireLock('probe')
+    assert.equal(typeof release, 'function')
+    const foreign = JSON.stringify({ pid: process.pid + 1, boot: currentBoot(), token: 'someone-else' })
+    assert.equal(release.isHeld(), true)
+    fs.writeFileSync(lock, foreign)
+    assert.equal(release.isHeld(), false)
+    release()
+    assert.equal(fs.readFileSync(lock, 'utf8'), foreign)
+    fs.rmSync(lock)
+  })
+})
+
 test('installLauncher run from a versions/ dir keeps the existing launcher bundled fallback when bundled.json is missing', async () => {
   await withStateDir(async (state) => {
     const bundledEntry = path.join(state, 'bundled-root', 'index.js')

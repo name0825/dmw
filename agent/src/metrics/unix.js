@@ -78,7 +78,7 @@ const DISK_PATH = os.platform() === 'darwin' ? '/System/Volumes/Data' : '/'
 // misleading 0% usage.
 const getDiskUsage = async () => {
   try {
-    const { stdout } = await execFileAsync('df', ['-P', DISK_PATH])
+    const { stdout } = await execFileAsync('df', ['-P', DISK_PATH], { timeout: 10000 })
     const lines = stdout.trim().split('\n')
     const parts = lines[lines.length - 1].trim().split(/\s+/)
     const size = Number(parts[1])
@@ -130,12 +130,10 @@ const getDisks = async () => {
       if (os.platform() !== 'linux') return true
       try { return fs.statSync(disk.source).isBlockDevice() } catch { return false }
     })
-    if (os.platform() === 'linux') return disks
     if (disks.length > 0) return disks
   } catch {
     // fall through to the single-path fallback
   }
-  if (os.platform() === 'linux') return []
   const usage = await getDiskUsage()
   return usage === undefined ? [] : [{ name: DISK_PATH, usage: Number(usage.toFixed(1)) }]
 }
