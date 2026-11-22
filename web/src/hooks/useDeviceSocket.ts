@@ -87,7 +87,9 @@ export const useDeviceSocket = (
             return
           }
 
-          // token 상태 변화(갱신)가 이 effect 를 재실행시키므로 여기서는 재연결을 예약하지 않는다.
+          // 토큰이 바뀌면 상태 변화가 이 effect 를 재실행시키므로 여기서는 예약하지 않는다.
+          // 토큰 문자열이 동일하면 재실행되지 않으므로 직접 재연결한다.
+          if (result.token === token) scheduleReconnect()
           return
         }
 

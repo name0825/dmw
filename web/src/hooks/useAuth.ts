@@ -69,10 +69,13 @@ export const useAuth = (
     authorizedRequest(url, init, token, async () => {
       const result = await refreshSession()
       if (result.status === 'ok') return result.token
-      if (result.status === 'auth-failed') clearSession()
+      if (result.status === 'auth-failed') {
+        clearSession()
+        setMessage('세션이 만료되었습니다. 다시 로그인해 주세요.')
+      }
       return null
     })
-  ), [token, refreshSession, clearSession])
+  ), [token, refreshSession, clearSession, setMessage])
 
   /**
    * Authenticate with the admin username and password.

@@ -24,7 +24,12 @@ export const useDevices = (
   authedRequest: (url: string, init?: RequestInit) => Promise<{ res: Response; data: any }>,
   setMessage: (message: string) => void,
 ) => {
-  const [devices, setDevices] = useState<Device[]>([])
+  const [devices, setDevicesState] = useState<Device[]>([])
+  const socketUpdateRef = useRef(0)
+  const setDevices = (next: Device[]) => {
+    socketUpdateRef.current += 1
+    setDevicesState(next)
+  }
   const [form, setForm] = useState<DeviceForm>({ name: '', mac_address: '', ip_address: '' })
   const [editingId, setEditingId] = useState<number | null>(null)
   const [historyByDevice, setHistoryByDevice] = useState<Record<number, DeviceHistoryEntry[]>>({})
@@ -37,7 +42,7 @@ export const useDevices = (
 
   const resetDevices = () => {
     sessionRef.current += 1
-    setDevices([])
+    setDevicesState([])
     setAlerts([])
     setHistoryByDevice({})
     setEditingId(null)
@@ -50,6 +55,7 @@ export const useDevices = (
     if (!token) return
 
     const session = sessionRef.current
+    const socketUpdate = socketUpdateRef.current
 
     try {
       const { res, data } = await authedRequest(`${apiBase}/devices`)
@@ -61,7 +67,9 @@ export const useDevices = (
         return
       }
 
-      setDevices(normalizeDevices(data?.devices ?? []))
+      if (socketUpdate === socketUpdateRef.current) {
+        setDevicesState(normalizeDevices(data?.devices ?? []))
+      }
 
       const alertResult = await authedRequest(`${apiBase}/alerts`)
 
