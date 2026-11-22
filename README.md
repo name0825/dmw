@@ -92,6 +92,8 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build  #
 docker compose -f docker-compose.yml -f docker-compose.https.yml up -d --build
 ```
 
+> 기본 평문 HTTP 스택은 LAN 전용이며 이 구성에서는 리프레시 쿠키에 Secure 플래그가 없으므로, HTTPS 오버레이 사용을 권장합니다.
+
 ## 설정 (환경 변수)
 
 서버(`server/src/config.ts`)가 읽는 환경 변수입니다. `.env`(dotenv) 또는 `dmw.conf`/`DMW_CONFIG`로 지정한 파일에서 로드하며, 실제 셸 환경 변수가 항상 우선합니다. 예시 파일: `.env.example`(Docker Compose용), `server/.env.example`, `server/.env.production.example`, `agent/.env.example`.

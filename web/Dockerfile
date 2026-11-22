@@ -1,13 +1,9 @@
-FROM node:20-alpine AS source
+FROM node:22-alpine AS source
 WORKDIR /app
 ARG VITE_API_BASE=
 ARG VITE_WS_BASE=
-ARG SERVER_PORT=3001
-ARG WS_PORT=3002
 ENV VITE_API_BASE=$VITE_API_BASE
 ENV VITE_WS_BASE=$VITE_WS_BASE
-ENV SERVER_PORT=$SERVER_PORT
-ENV WS_PORT=$WS_PORT
 COPY package.json package-lock.json ./
 COPY server/package.json server/package.json
 COPY web/package.json web/package.json

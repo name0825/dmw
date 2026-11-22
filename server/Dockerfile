@@ -1,4 +1,4 @@
-FROM node:20-alpine AS source
+FROM node:22-alpine AS source
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -11,7 +11,7 @@ COPY server server
 FROM source AS build
 RUN npm run build -w server
 
-FROM node:20-alpine AS runtime
+FROM node:22-alpine AS runtime
 WORKDIR /app
 ENV NODE_ENV=production
 

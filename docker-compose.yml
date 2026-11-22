@@ -41,8 +41,6 @@ services:
       args:
         VITE_API_BASE: ${VITE_API_BASE:-}
         VITE_WS_BASE: ${VITE_WS_BASE:-}
-        SERVER_PORT: ${SERVER_PORT:-3001}
-        WS_PORT: ${WS_PORT:-3002}
     container_name: dmw-web
     restart: unless-stopped
     network_mode: host
