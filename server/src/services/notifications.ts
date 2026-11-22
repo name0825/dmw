@@ -31,7 +31,7 @@ export const notifyAlerts = async (alerts: DeviceAlert[]): Promise<void> => {
           username: 'DMW Alert',
           embeds: [{
             title: 'Device monitoring alert',
-            description: message,
+            description: message.slice(0, 4096),
             color: 15158332,
           }],
         }
@@ -60,9 +60,11 @@ const sendNotification = async (url: string, payload: object): Promise<void> => 
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(5000),
     })
-    if (!response.ok) throw new Error('Notification request failed')
-  } catch {
-    console.error('[Notifications] Failed to send alert')
+    if (!response.ok) {
+      console.error(`[Notifications] Failed to send alert: HTTP ${response.status}`)
+    }
+  } catch (error) {
+    console.error(`[Notifications] Failed to send alert: ${error instanceof Error ? error.name : 'unknown error'}`)
   }
 }
 

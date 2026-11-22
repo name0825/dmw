@@ -15,6 +15,9 @@ import { applySelection, parseMetricSelection, sanitizeExtraMetrics, type Heartb
 // Length of the first 12 characters of API key (stored as hint in DB)
 export const API_KEY_HINT_LEN = 12
 
+// services/devices.ts 의 MAX_DEVICE_NAME_LENGTH 와 같은 값 (에이전트가 보낸 이름에도 동일 상한 적용)
+const MAX_DEVICE_NAME_LENGTH = 100
+
 // handlePair 내부에서만 쓰는 신호용 에러. 페어링 코드가 없음/이미 사용됨/만료됨 중
 // 어느 경우든 401 로 매핑되며, withTransaction 이 던져진 에러를 보고 롤백하게 만드는
 // 용도로만 쓴다 (500 으로 새어 나가지 않도록 바깥에서 별도로 잡는다).
@@ -49,7 +52,7 @@ const extractPairRequest = (body: any) => {
     name?: string
   }
   return {
-    pairingCode: pairingCode || '',
+    pairingCode: typeof pairingCode === 'string' ? pairingCode : '',
     macAddress: macAddress || '',
     ipAddress: ipAddress || '',
     name: typeof name === 'string' && name.trim() ? name.trim() : '',
@@ -145,6 +148,10 @@ export const handlePair = async (request: any, reply: any) => {
   }
   if (!isValidIp(ipAddress)) {
     reply.code(400).send({ message: 'Invalid IP address' })
+    return
+  }
+  if (name.length > MAX_DEVICE_NAME_LENGTH) {
+    reply.code(400).send({ message: 'Device name is too long' })
     return
   }
 

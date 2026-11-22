@@ -70,8 +70,9 @@ export const issueRefreshToken = async (
  */
 export const extractRefreshToken = (request: any): string => {
   const cookieToken = request.cookies?.refreshToken || ''
-  const bodyToken = (request.body as { refreshToken?: string } | undefined)?.refreshToken || ''
-  return bodyToken || cookieToken
+  const rawBodyToken = (request.body as { refreshToken?: unknown } | undefined)?.refreshToken
+  const bodyToken = typeof rawBodyToken === 'string' ? rawBodyToken : ''
+  return bodyToken || (typeof cookieToken === 'string' ? cookieToken : '')
 }
 
 /**

@@ -536,3 +536,20 @@ test('cancel after a lapsed lock restores the earlier entry instead of re-lockin
     resetPasswordThrottles()
   }
 })
+
+test('refresh and logout ignore a non-string body refreshToken instead of throwing', async () => {
+  for (const bad of [123, { a: 1 }, ['x'], true]) {
+    const refreshReply = reply()
+    await handleRefresh({ cookies: {}, body: { refreshToken: bad } }, refreshReply)
+    assert.equal(refreshReply.status, 401)
+
+    const logoutReply = reply()
+    await handleLogout({ cookies: {}, body: { refreshToken: bad } }, logoutReply)
+    assert.equal(logoutReply.status, 200)
+  }
+
+  const { refreshToken } = await login()
+  const fallbackReply = reply()
+  await handleRefresh({ cookies: { refreshToken }, body: { refreshToken: 123 } }, fallbackReply)
+  assert.equal(fallbackReply.status, 200)
+})

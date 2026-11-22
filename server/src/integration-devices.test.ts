@@ -300,3 +300,65 @@ test('PUT /devices/:id/metric-selection validates input, requires auth, persists
     await app.close()
   }
 })
+
+test('device write routes reject a non-admin user with 403', async () => {
+  const app = buildApp()
+  try {
+    const db = getDb()
+    await db.run('DELETE FROM users WHERE email = ?', ['plain-user@dmw.local'])
+    await db.run('INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)', [
+      'plain-user@dmw.local',
+      'x',
+      'user',
+      new Date().toISOString(),
+    ])
+    const headers = { authorization: `Bearer ${createToken('plain-user@dmw.local', 0)}` }
+    const created = await db.run(
+      'INSERT INTO devices (name, mac_address, ip_address, status, updated_at) VALUES (?, ?, ?, ?, ?)',
+      ['Target', 'AA:BB:CC:DD:EE:31', '192.168.1.71', 'OFFLINE', new Date().toISOString()],
+    )
+    const id = created.lastID
+
+    const attempts = [
+      { method: 'POST', url: '/devices', payload: { name: 'X', mac_address: 'AA:BB:CC:DD:EE:32', ip_address: '192.168.1.72' } },
+      { method: 'PATCH', url: `/devices/${id}`, payload: { name: 'Y' } },
+      { method: 'PUT', url: `/devices/${id}/metric-selection`, payload: { metrics: [] } },
+      { method: 'POST', url: `/devices/${id}/wake` },
+      { method: 'DELETE', url: `/devices/${id}` },
+    ] as const
+    for (const attempt of attempts) {
+      const response = await app.inject({ ...attempt, headers })
+      assert.equal(response.statusCode, 403, `${attempt.method} ${attempt.url}`)
+    }
+    assert.ok(await db.get('SELECT 1 FROM devices WHERE id = ?', [id]))
+
+    const read = await app.inject({ method: 'GET', url: '/devices', headers })
+    assert.equal(read.statusCode, 200)
+  } finally {
+    await app.close()
+  }
+})
+
+test('POST /pairing-codes rejects a non-admin user with 403', async () => {
+  const app = buildApp()
+  try {
+    const db = getDb()
+    await db.run('DELETE FROM users WHERE email = ?', ['plain-user2@dmw.local'])
+    await db.run('INSERT INTO users (email, password_hash, role, created_at) VALUES (?, ?, ?, ?)', [
+      'plain-user2@dmw.local',
+      'x',
+      'user',
+      new Date().toISOString(),
+    ])
+    const response = await app.inject({
+      method: 'POST',
+      url: '/pairing-codes',
+      headers: { authorization: `Bearer ${createToken('plain-user2@dmw.local', 0)}` },
+      payload: {},
+    })
+    assert.equal(response.statusCode, 403)
+    assert.equal((await db.get('SELECT COUNT(*) AS n FROM pairing_codes')).n, 0)
+  } finally {
+    await app.close()
+  }
+})

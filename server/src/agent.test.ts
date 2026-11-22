@@ -243,3 +243,21 @@ test('heartbeat with a missing metric keeps the previous latest value', async ()
   const latest = await db.get('SELECT cpu_usage, memory_usage, disk_usage FROM device_metrics_latest WHERE device_id = ?', [deviceId])
   assert.deepEqual({ ...latest }, { cpu_usage: 60, memory_usage: 30, disk_usage: 20 })
 })
+
+test('pairing rejects a non-string pairingCode and an over-long name with 400', async () => {
+  for (const pairingCode of [{ $gt: '' }, ['x'], 12345]) {
+    const badCode = reply()
+    await handlePair({ body: { pairingCode, macAddress: 'AA:BB:CC:DD:EE:20', ipAddress: '192.168.1.60' } }, badCode)
+    assert.equal(badCode.status, 400)
+  }
+
+  await seedPairingCode('LONGNAME1')
+  const longName = reply()
+  await handlePair(
+    { body: { pairingCode: 'LONGNAME1', macAddress: 'AA:BB:CC:DD:EE:21', ipAddress: '192.168.1.61', name: 'a'.repeat(101) } },
+    longName,
+  )
+  assert.equal(longName.status, 400)
+  const unused = await getDb().get('SELECT used_at FROM pairing_codes WHERE code = ?', ['LONGNAME1'])
+  assert.ok(unused, 'code must not be consumed by a rejected request')
+})

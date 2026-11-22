@@ -101,8 +101,8 @@ export const updateOfflineStates = async () => {
     evaluateOfflineAlert(device, previousStatus),
   ))
   if (offlineAlerts.length) {
-    await saveAlertsToDb(offlineAlerts)
     recordAlertCooldown(offlineAlerts)
+    await saveAlertsToDb(offlineAlerts)
     await notifyAlerts(offlineAlerts)
   }
 
@@ -146,8 +146,8 @@ export const monitorAlerts = async () => {
   const filteredAlerts = applyAlertCooldown(alerts)
 
   if (filteredAlerts.length) {
-    await saveAlertsToDb(filteredAlerts)
     recordAlertCooldown(filteredAlerts)
+    await saveAlertsToDb(filteredAlerts)
     await notifyAlerts(filteredAlerts)
   }
 }

@@ -50,16 +50,26 @@ const loadOrCreate = async (keyPath: string): Promise<string> => {
   const tempPath = `${keyPath}.${process.pid}.${crypto.randomBytes(6).toString('hex')}.tmp`
   try {
     await fs.writeFile(tempPath, privateKey, { encoding: 'utf8', mode: 0o600, flag: 'wx' })
-    await fs.rename(tempPath, keyPath)
+    try {
+      await fs.link(tempPath, keyPath)
+    } catch (linkError) {
+      if (!['EPERM', 'ENOTSUP', 'ENOSYS'].includes((linkError as NodeJS.ErrnoException).code ?? '')) throw linkError
+      await fs.rename(tempPath, keyPath)
+    }
   } catch (error) {
     await fs.unlink(tempPath).catch(() => undefined)
+    if ((error as NodeJS.ErrnoException).code === 'EEXIST') {
+      const winner = await readExisting(keyPath)
+      if (winner !== null) return winner
+    }
     throw error
   }
+  await fs.unlink(tempPath).catch(() => undefined)
   return privateKey
 }
 
 /**
- * 서버 SSH 개인키를 반환한다. 파일이 없으면 ed25519 키쌍을 만들어 0600 임시 파일에 쓴 뒤 rename 으로 배치한다.
+ * 서버 SSH 개인키를 반환한다. 파일이 없으면 ed25519 키쌍을 만들어 0600 임시 파일에 쓴 뒤 link 로 배치한다 (이미 있는 키는 덮어쓰지 않는다).
  * 프로세스 안에서는 경로별로 하나의 프라미스만 공유하므로 동시 최초 호출도 같은 키를 돌려받는다.
  * @param keyPath - 개인키 파일 경로 (기본값: SSH_KEY_PATH)
  */
